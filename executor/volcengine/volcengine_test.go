@@ -101,6 +101,95 @@ func TestVolcChatCompletion(t *testing.T) {
 	}
 }
 
+func TestVolcChatGLM4(t *testing.T) {
+	const glmModel = "glm-4-7-251222"
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAI,
+		InboundFormat:  translator.FormatOpenAI,
+		ClientFormat:   translator.FormatOpenAI,
+		Model: glmModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"model":    glmModel,
+		"messages": []map[string]any{{"role": "user", "content": "你是谁？用一句话介绍自己。"}},
+	})
+	resp, err := execReq(e, info, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	mustUnmarshal(t, resp, &m)
+	choices, _ := m["choices"].([]any)
+	if len(choices) == 0 {
+		t.Fatalf("no choices: %s", string(resp))
+	}
+	c := choices[0].(map[string]any)
+	if msg, ok := c["message"].(map[string]any); ok {
+		t.Logf("GLM-4 response: %s", msg["content"])
+	} else {
+		t.Logf("GLM-4 response: %s", string(resp))
+	}
+}
+
+func TestVolcStreamGLM4(t *testing.T) {
+	const glmModel = "glm-4-7-251222"
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAI,
+		InboundFormat:  translator.FormatOpenAI,
+		ClientFormat:   translator.FormatOpenAI,
+		Model: glmModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+		IsStream: true,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"model":    glmModel,
+		"messages": []map[string]any{{"role": "user", "content": "从1数到5。"}},
+		"stream":   true,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var chunks [][]byte
+	err := executor.ExecuteStream(ctx, e, info, b, func(chunk []byte) error {
+		c := make([]byte, len(chunk))
+		copy(c, chunk)
+		chunks = append(chunks, c)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks) == 0 {
+		t.Fatal("no chunks")
+	}
+	gotData := false
+	gotDone := false
+	full := string(bytes.Join(chunks, nil))
+	for _, line := range strings.Split(full, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "data: [DONE]" {
+			gotDone = true
+		} else if strings.HasPrefix(line, "data: ") {
+			gotData = true
+		}
+	}
+	if !gotData {
+		t.Fatal("no data chunks")
+	}
+	if !gotDone {
+		t.Fatal("no [DONE]")
+	}
+	t.Logf("GLM-4 stream: %d chunks, %.2f KB", len(chunks), float64(len(bytes.Join(chunks, nil)))/1024)
+}
+
 func TestVolcStreamChat(t *testing.T) {
 	key := volcKey(t)
 	e := executor.GetByProvider("volcengine")
