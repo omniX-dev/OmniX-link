@@ -46,28 +46,37 @@ go get github.com/just4zeroq/Omni-link
 package main
 
 import (
-    "github.com/just4zeroq/Omni-link/translator"
-    textexec "github.com/just4zeroq/Omni-link/executor/text"
+    "github.com/just4zeroq/Omni-link/client"
+    "github.com/just4zeroq/Omni-link/model"
 )
 
 func main() {
-    // 1. Convert formats
-    claudeReq := `{"messages":[{"role":"user","content":"Hello"}],"max_tokens":1024}`
-    openaiReq, _ := translator.Convert([]byte(claudeReq),
-        translator.FormatClaude, translator.FormatOpenAI)
-    // openaiReq → {"model":"...","messages":[...],"max_tokens":1024}
-
-    // 2. Use an executor
-    e := &textexec.ClaudeExecutor{}
-    e.Init(channel)
-
-    info := &textexec.RequestInfo{
-        InboundFormat:  translator.FormatOpenAI,
-        ClientFormat:   translator.FormatOpenAI,
-        UpstreamFormat: translator.FormatClaude, // auto-resolve via Plan()
-        IsStream:       true,
+    ch := &model.Channel{
+        ProviderType: model.ProviderOpenAI,
+        Protocols: []model.ProtocolEntry{{
+            Protocol: model.ProtocolOpenAI,
+            BaseURL:  "https://api.openai.com",
+        }},
+        ApiKeyEncrypted: "sk-...",
     }
-    textexec.ExecuteStream(ctx, e, info, body, callback)
+    c := client.NewClient(ch)
+
+    // Text chat
+    resp, _ := c.Chat(ctx, []byte(`{"model":"gpt-4","messages":[{"role":"user","content":"Hi"}]}`))
+
+    // Image generation
+    images, _ := c.Image(ctx, &image.TextToImageRequest{Prompt: "a cat", N: 1})
+
+    // TTS
+    stream, _ := c.Speak(ctx, &audio.TTSRequest{Input: "Hello", Voice: "coral"})
+    result, _ := stream.Collect()
+
+    // STT
+    text, _ := c.Transcribe(ctx, &audio.STTRequest{File: audioBytes, FileName: "speech.mp3"})
+
+    // Video (async, poll)
+    task, _ := c.Video(ctx, &video.TextToVideoRequest{Prompt: "rocket launch"})
+    task, _ = c.PollVideo(ctx, task.ID)
 }
 ```
 
@@ -102,6 +111,30 @@ task, _ := videoExec.TextToVideo(&videoexec.TextToVideoRequest{
 })
 // Poll: videoExec.GetTask(task.ID)
 ```
+
+---
+
+## Unified Client API
+
+`client.NewClient(channel)` wraps all modalities in one object — no format juggling, no manual executor resolve.
+
+| Method | Purpose |
+|--------|---------|
+| `c.Chat(ctx, body)` | Text chat (sync, OpenAI JSON body) |
+| `c.ChatStream(ctx, body, callback)` | Text chat (streaming) |
+| `c.Image(ctx, req)` | Text-to-image |
+| `c.ImageEdit(ctx, req)` | Image-to-image |
+| `c.GetImageTask(ctx, id)` | Poll async image task |
+| `c.Speak(ctx, req)` | TTS → `*AudioStream` |
+| `c.Transcribe(ctx, req)` | STT → `*STTResult` |
+| `c.Music(ctx, req)` | Music generation (async) |
+| `c.PollMusic(ctx, id)` | Poll music task |
+| `c.ListVoices(ctx)` | Available TTS voices |
+| `c.Video(ctx, req)` | Text-to-video (async) |
+| `c.VideoFromImage(ctx, req)` | Image-to-video |
+| `c.PollVideo(ctx, id)` | Poll video task |
+
+See [client/client.go](client/client.go) for full API.
 
 ---
 
@@ -334,6 +367,8 @@ Omni-link/
 │   ├── claude.go             # Claude Messages type defs
 │   ├── gemini.go             # Gemini type defs
 │   └── responses.go          # Responses API type defs
+├── client/
+│   └── client.go               # Unified Go-idiomatic client (Chat/Image/Speak/Video)
 ├── executor/
 │   ├── text/
 │   │   ├── executor.go        # Executor interface, RequestInfo, Plan()
