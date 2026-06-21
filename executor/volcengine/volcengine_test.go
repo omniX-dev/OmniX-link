@@ -190,6 +190,99 @@ func TestVolcStreamGLM4(t *testing.T) {
 	t.Logf("GLM-4 stream: %d chunks, %.2f KB", len(chunks), float64(len(bytes.Join(chunks, nil)))/1024)
 }
 
+// ========================================================================
+// DeepSeek V3 via volcengine endpoint
+// ========================================================================
+
+func TestVolcChatDSV3(t *testing.T) {
+	const dsModel = "deepseek-v3-2-251201"
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAI,
+		InboundFormat:  translator.FormatOpenAI,
+		ClientFormat:   translator.FormatOpenAI,
+		Model: dsModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"model":    dsModel,
+		"messages": []map[string]any{{"role": "user", "content": "Say hello in one word."}},
+	})
+	resp, err := execReq(e, info, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	mustUnmarshal(t, resp, &m)
+	choices, _ := m["choices"].([]any)
+	if len(choices) == 0 {
+		t.Fatalf("no choices: %s", string(resp))
+	}
+	c := choices[0].(map[string]any)
+	if msg, ok := c["message"].(map[string]any); ok {
+		t.Logf("DS V3 via volc: %s", msg["content"])
+	} else {
+		t.Logf("DS V3 via volc: %s", string(resp))
+	}
+}
+
+func TestVolcStreamDSV3(t *testing.T) {
+	const dsModel = "deepseek-v3-2-251201"
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAI,
+		InboundFormat:  translator.FormatOpenAI,
+		ClientFormat:   translator.FormatOpenAI,
+		Model: dsModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+		IsStream: true,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"model":    dsModel,
+		"messages": []map[string]any{{"role": "user", "content": "从1数到5。"}},
+		"stream":   true,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var chunks [][]byte
+	err := executor.ExecuteStream(ctx, e, info, b, func(chunk []byte) error {
+		c := make([]byte, len(chunk))
+		copy(c, chunk)
+		chunks = append(chunks, c)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks) == 0 {
+		t.Fatal("no chunks")
+	}
+	gotData := false
+	gotDone := false
+	full := string(bytes.Join(chunks, nil))
+	for _, line := range strings.Split(full, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "data: [DONE]" {
+			gotDone = true
+		} else if strings.HasPrefix(line, "data: ") {
+			gotData = true
+		}
+	}
+	if !gotData {
+		t.Fatal("no data chunks")
+	}
+	if !gotDone {
+		t.Fatal("no [DONE]")
+	}
+	t.Logf("DS V3 stream via volc: %d chunks, %.2f KB", len(chunks), float64(len(bytes.Join(chunks, nil)))/1024)
+}
+
 func TestVolcStreamChat(t *testing.T) {
 	key := volcKey(t)
 	e := executor.GetByProvider("volcengine")
