@@ -162,8 +162,10 @@ func dsInjectThinking(body []byte, info *executor.RequestInfo) []byte {
 // dsMapEffort maps standard reasoning effort to DeepSeek's effort levels.
 func dsMapEffort(effort string) string {
 	switch effort {
-	case "low", "medium", "minimal":
-		return "high"
+	case "minimal", "low":
+		return "low"
+	case "medium":
+		return "medium"
 	case "high":
 		return "high"
 	case "xhigh", "max":

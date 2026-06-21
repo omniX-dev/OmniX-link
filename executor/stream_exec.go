@@ -36,7 +36,10 @@ func Request(e Executor, info *RequestInfo, body []byte) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response body: %w", err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("upstream error (status %d): %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}

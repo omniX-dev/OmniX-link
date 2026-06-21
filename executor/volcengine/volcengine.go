@@ -96,13 +96,7 @@ func (e *VolcengineExecutor) RequestCustomize(body []byte, info *executor.Reques
 		}
 	}
 	if info.IsStream && info.UpstreamFormat == translator.FormatOpenAI {
-		var raw map[string]json.RawMessage
-		if err := json.Unmarshal(body, &raw); err == nil {
-			if _, exists := raw["stream_options"]; !exists {
-				raw["stream_options"] = json.RawMessage(`{"include_usage":true}`)
-				body, _ = json.Marshal(raw)
-			}
-		}
+		body = executor.InjectStreamOptionsOpenAI(body)
 	}
 	return body
 }

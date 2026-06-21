@@ -1,6 +1,6 @@
-# Omni-link — LLM API Protocol Translation Layer
+# Omni-link — AI API Protocol Translation Layer
 
-Go module bridging LLM API protocol formats (OpenAI Chat, Claude Messages, OpenAI Responses, Gemini). Client using protocol A can transparently call provider of protocol B.
+Go module bridging AI API protocol formats (OpenAI Chat, Claude Messages, OpenAI Responses). Client using format A can transparently call provider of format B. Gemini format used internally by Gemini executor only.
 
 ## Architecture
 
@@ -19,25 +19,26 @@ executor/    → Provider-specific executors with plugin registry
 
 ### translator — Format conversion
 
-Core conversion engine. 4 supported formats:
+Core conversion engine. 3 client-exposed formats + 1 internal format:
 
-| Format | Endpoint | Default Relay Mode |
-|--------|----------|-------------------|
-| `openai` | `/v1/chat/completions` | `chat-completions` |
-| `claude` | `/v1/messages` | `claude-messages` |
-| `openai_responses` | `/v1/responses` | `responses` |
-| `gemini` | (Google endpoint) | — |
+| Format | Endpoint | Notes |
+|--------|----------|-------|
+| `openai` | `/v1/chat/completions` | Client interface |
+| `claude` | `/v1/messages` | Client interface |
+| `openai_responses` | `/v1/responses` | Client interface |
+| `gemini` | (Google endpoint) | **Executor-internal only** — not exposed as client interface |
 
-**Conversion matrix** (✓ = direct, · = via hub/OpenAI intermediate, — = same format):
+**Conversion matrix** (✓ = direct, · = hub/OpenAI intermediate, — = same format):
 
-| from → to | openai | claude | responses | gemini |
-|-----------|--------|--------|-----------|--------|
-| **openai** | — | ✓ | ✓ | ✓ |
-| **claude** | ✓ | — | ✓ | ✓ |
-| **responses** | ✓ | ✓ | — | ✓ |
-| **gemini** | ✓ | ✓ | ✓ | — |
+| from ↓ → to | openai | claude | responses | gemini |
+|-------------|--------|--------|-----------|--------|
+| **openai** | — | ✓ | ✓ | ✓ ¹ |
+| **claude** | ✓ | — | ✓ | ✓ ¹ |
+| **responses** | ✓ | ✓ | — | ✓ ¹ |
+| **gemini** ² | ✓ ¹ | ✓ ¹ | ✓ ¹ | — |
 
-All 12 pairs direct. No hub fallback needed for any format combination.
+¹ Gemini conversion used internally by Gemini executor only.  
+² Gemini format not exposed as client interface. Only convertible to/from via hub fallback.
 
 **Key functions:**
 - `Convert(body, from, to)` — entry point. Falls back via OpenAI intermediate when direct path missing
@@ -61,10 +62,10 @@ func init() { Register("claude", &ClaudeExecutor{}) }
 
 **Executor interface:**
 - `Init(channel)` — configure from `*model.Channel`
-- `NativeFormats()` — upstream formats this executor natively supports
+- `NativeEndpoints()` — upstream formats + URL paths this executor supports
 - `GetRequestURL(info)` — build upstream URL
 - `SetupRequestHeader(header, info)` — auth, content-type, streaming headers
-- `ConvertRequest/ConvertResponse(body, from, to)` — format conversion
+- `ConvertRequest/ConvertResponse(body, from, to)` — format conversion (all delegate to `translator.Convert`)
 - `RequestCustomize/ResponseCustomize(body, info)` — vendor-specific injection
 - `NewResponseStream(from, to)` — SSE streaming converter
 - `DoRequest(info, body)` — raw HTTP call
@@ -72,9 +73,9 @@ func init() { Register("claude", &ClaudeExecutor{}) }
 **Implemented executors:**
 - `claude` — native Claude, SSE streaming Claude↔OpenAI
 - `openai` — native OpenAI Chat, includes Responses↔OpenAI
-- `gemini` — native Gemini, hub via OpenAI intermediate
+- `gemini` — native Gemini, converts via OpenAI intermediate on request/response
 - `deepseek` — dual native (OpenAI + Claude), custom thinking/reasoning injection
-- `volcengine` — OpenAI-compatible, volcengine-specific URL routing
+- `volcengine` — dual native (OpenAI Chat + OpenAI Responses), SSE passthrough
 
 **Format planning:**
 `Plan(input, output, capabilities)` selects optimal upstream format minimizing conversions (score = input mismatch + output mismatch). Prefers format matching output format on tie.
@@ -99,8 +100,6 @@ Both buffer incomplete events, handle tool calls, track usage accumulation.
 - No conversion code duplication across executor files
 - Vendor-specific modifications go in `RequestCustomize`/`ResponseCustomize` hooks (e.g. `dsInjectThinking`, `injectStreamOptionsOpenAI`, `replaceModelField`)
 
-**Exception:** Gemini executor keeps its own conversion logic (Gemini format not yet in translator). Planned for consolidation.
-
 **Error patterns:**
 - All conversions return `fmt.Errorf("provider: direction: %w", err)` — wraps with direction context
 - Unsupported format pairs return explicit error, never silent fallthrough
@@ -112,14 +111,14 @@ Both buffer incomplete events, handle tool calls, track usage accumulation.
 ## Testing
 
 **Unit tests** (`translator/conv_test.go`):
-- 37 test cases covering all 12 format conversion pairs + round-trip + DetectFormat
+- 37 test cases covering format detection, all conversion pairs, round-trip
 - Run: `go test ./translator/`
 
 **Integration tests** (`executor/deepseek/` + `executor/volcengine/`):
 Requires valid API keys in `.env`. DeepSeek tests cover:
 - OpenAI-compatible endpoint (`/v1/chat/completions`)
 - Anthropic-compatible endpoint (`/anthropic/v1/messages`)
-- Format conversion (OpenAI→Claude→OpenAI round-trip)
+- Format conversion (OpenAI↔Claude round-trip)
 - Full executor pipeline, streaming, tools, thinking, error handling
 - Run: `go test ./executor/deepseek/ -timeout 120s`
 
@@ -138,6 +137,6 @@ Volcengine (Doubao/火山引擎) tests cover:
 
 ## Common operations
 
-- **Add new provider executor**: create `executor/<name>.go` with `init()` Registration, implement `Executor` interface, add suffix-prefixed conversion helpers
+- **Add new provider executor**: create `executor/<name>.go` with `init()` Registration, implement `Executor` interface, add vendor-specific hooks
 - **Add new format**: define types in new `translator/<name>.go`, add `Format` constant, implement `convertDirect` cases in `conv.go`
 - **Add new channel mapping**: add `ProviderType` constant in `model/model.go`, add `ResolveProtocol` case

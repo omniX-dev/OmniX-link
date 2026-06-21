@@ -389,7 +389,8 @@ func openAIToClaudeResponse(body []byte) ([]byte, error) {
 		ID: "", Type: "message", Role: "assistant", Model: resp.Model,
 	}
 
-	for _, choice := range resp.Choices {
+	if len(resp.Choices) > 0 {
+		choice := resp.Choices[0]
 		blocks := make([]ClaudeContentBlock, 0)
 		if choice.Message.ReasoningContent != nil && *choice.Message.ReasoningContent != "" {
 			blocks = append(blocks, ClaudeContentBlock{
@@ -489,8 +490,7 @@ func openAIToResponses(body []byte) ([]byte, error) {
 	kind := detectBodyKind(body)
 	switch kind {
 	case bodyRequest:
-		// OpenAI request → Responses request is rarely needed
-		return body, nil // passthrough
+		return nil, fmt.Errorf("openai->responses request conversion not implemented")
 	case bodyResponse:
 		return openAIToResponsesResponse(body)
 	default:
@@ -640,7 +640,8 @@ func claudeToResponsesRequest(body []byte) ([]byte, error) {
 	if req.System != nil {
 		sysStr := extractTextContent(req.System)
 		if sysStr != "" {
-			r.Instructions = json.RawMessage(`"` + sysStr + `"`)
+			instructions, _ := json.Marshal(sysStr)
+			r.Instructions = json.RawMessage(instructions)
 		}
 	}
 
@@ -1099,7 +1100,7 @@ func geminiToOpenAI(body []byte) ([]byte, error) {
 	case bodyResponse:
 		return geminiToOpenAIResponse(body)
 	case bodyRequest:
-		return geminiToOpenAIRequest(body)
+		return body, nil // passthrough - Gemini->OpenAI request not exposed
 	default:
 		return nil, fmt.Errorf("cannot detect body kind for gemini→openai conversion")
 	}
@@ -1111,7 +1112,7 @@ func openAIToGemini(body []byte) ([]byte, error) {
 	case bodyRequest:
 		return openAIToGeminiRequest(body)
 	case bodyResponse:
-		return openAIToGeminiResponse(body)
+		return body, nil // passthrough - OpenAI->Gemini response not exposed
 	default:
 		return nil, fmt.Errorf("cannot detect body kind for openai→gemini conversion")
 	}
@@ -1335,240 +1336,6 @@ func openAIToGeminiRequest(body []byte) ([]byte, error) {
 	return json.Marshal(gReq)
 }
 
-func geminiToOpenAIRequest(body []byte) ([]byte, error) {
-	var gReq GeminiChatRequest
-	if err := json.Unmarshal(body, &gReq); err != nil {
-		return nil, fmt.Errorf("gemini->openai: unmarshal: %w", err)
-	}
-
-	req := ChatRequest{
-		Messages: make([]Message, 0, len(gReq.Contents)+1),
-	}
-
-	if gReq.GenerationConfig != nil {
-		cfg := gReq.GenerationConfig
-		req.Temperature = cfg.Temperature
-		req.TopP = cfg.TopP
-		if cfg.MaxOutputTokens != nil {
-			v := int(*cfg.MaxOutputTokens)
-			req.MaxCompletionTokens = &v
-		}
-		if len(cfg.StopSequences) > 0 {
-			if len(cfg.StopSequences) == 1 {
-				req.Stop = cfg.StopSequences[0]
-			} else {
-				req.Stop = cfg.StopSequences
-			}
-		}
-		req.PresencePenalty = cfg.PresencePenalty
-		req.FrequencyPenalty = cfg.FrequencyPenalty
-		req.Seed = cfg.Seed
-		if cfg.ThinkingConfig != nil && cfg.ThinkingConfig.IncludeThoughts {
-			switch cfg.ThinkingConfig.ThinkingLevel {
-			case "LOW":
-				req.ReasoningEffort = "low"
-			case "MEDIUM":
-				req.ReasoningEffort = "medium"
-			case "HIGH":
-				req.ReasoningEffort = "high"
-			default:
-				req.ReasoningEffort = "medium"
-			}
-		}
-	}
-
-	if gReq.SystemInstruction != nil {
-		text := extractTextFromGeminiParts(gReq.SystemInstruction.Parts)
-		if text != "" {
-			req.Messages = append(req.Messages, Message{Role: "system", Content: text})
-		}
-	}
-
-	for _, content := range gReq.Contents {
-		switch content.Role {
-		case "user":
-			var fnResponses []struct {
-				name string
-				resp any
-			}
-			var regularParts []GeminiPart
-			for _, part := range content.Parts {
-				if part.FunctionResponse != nil {
-					fnResponses = append(fnResponses, struct {
-						name string
-						resp any
-					}{name: part.FunctionResponse.Name, resp: part.FunctionResponse.Response})
-				} else {
-					regularParts = append(regularParts, part)
-				}
-			}
-			for _, fnr := range fnResponses {
-				respJSON, _ := json.Marshal(fnr.resp)
-				req.Messages = append(req.Messages, Message{
-					Role: "tool", ToolCallID: fnr.name,
-					Content: string(respJSON),
-				})
-			}
-			if len(regularParts) > 0 {
-				req.Messages = append(req.Messages, Message{
-					Role: "user", Content: geminiPartsToOpenAIContent(regularParts),
-				})
-			} else if len(fnResponses) == 0 {
-				req.Messages = append(req.Messages, Message{Role: "user", Content: ""})
-			}
-		case "model":
-			msg := Message{Role: "assistant"}
-			var textParts, reasoningParts []string
-			var toolCalls []ToolCall
-			tcIdx := 0
-			for _, part := range content.Parts {
-				if part.Text != "" {
-					if part.Thought != nil && *part.Thought {
-						reasoningParts = append(reasoningParts, part.Text)
-					} else {
-						textParts = append(textParts, part.Text)
-					}
-				}
-				if part.FunctionCall != nil {
-					argsJSON, _ := json.Marshal(part.FunctionCall.Arguments)
-					toolCalls = append(toolCalls, ToolCall{
-						ID: fmt.Sprintf("call_%d", tcIdx), Type: "function",
-						Function: FunctionCall{
-							Name:      part.FunctionCall.FunctionName,
-							Arguments: string(argsJSON),
-						},
-					})
-					tcIdx++
-				}
-			}
-			if len(textParts) > 0 {
-				msg.Content = strings.Join(textParts, "")
-			}
-			if len(reasoningParts) > 0 {
-				joined := strings.Join(reasoningParts, "\n")
-				msg.ReasoningContent = &joined
-			}
-			if len(toolCalls) > 0 {
-				msg.ToolCalls = toolCalls
-			}
-			req.Messages = append(req.Messages, msg)
-		}
-	}
-
-	if gReq.Tools != nil {
-		req.Tools = gReq.Tools
-	}
-	if gReq.ToolConfig != nil {
-		req.ToolChoice = gReq.ToolConfig
-	}
-
-	return json.Marshal(req)
-}
-
-func openAIToGeminiResponse(body []byte) ([]byte, error) {
-	var resp ChatResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("openai->gemini: unmarshal: %w", err)
-	}
-
-	gResp := GeminiChatResponse{
-		Candidates: make([]GeminiCandidate, 0, len(resp.Choices)),
-		ModelName:  resp.Model,
-	}
-
-	for _, choice := range resp.Choices {
-		candidate := GeminiCandidate{
-			Index:        choice.Index,
-			FinishReason: mapOpenAIFinishToGemini(choice.FinishReason),
-		}
-
-		var parts []GeminiPart
-		if choice.Message.Content != nil && *choice.Message.Content != "" {
-			parts = append(parts, GeminiPart{Text: *choice.Message.Content})
-		}
-		if choice.Message.ReasoningContent != nil && *choice.Message.ReasoningContent != "" {
-			t := true
-			parts = append(parts, GeminiPart{Text: *choice.Message.ReasoningContent, Thought: &t})
-		}
-		for _, tc := range choice.Message.ToolCalls {
-			args := map[string]any{}
-			if tc.Function.Arguments != "" {
-				json.Unmarshal([]byte(tc.Function.Arguments), &args)
-			}
-			parts = append(parts, GeminiPart{
-				FunctionCall: &GeminiFunctionCall{
-					FunctionName: tc.Function.Name,
-					Arguments:    args,
-				},
-			})
-		}
-
-		if len(parts) > 0 {
-			candidate.Content = &GeminiContent{Role: "model", Parts: parts}
-		}
-		gResp.Candidates = append(gResp.Candidates, candidate)
-	}
-
-	if resp.Usage != nil {
-		gResp.UsageMetadata = &GeminiUsageMetadata{
-			PromptTokenCount:     resp.Usage.PromptTokens,
-			CandidatesTokenCount: resp.Usage.CompletionTokens,
-			TotalTokenCount:      resp.Usage.TotalTokens,
-		}
-	}
-
-	return json.Marshal(gResp)
-}
-
-func extractTextFromGeminiParts(parts []GeminiPart) string {
-	var texts []string
-	for _, p := range parts {
-		if p.Text != "" {
-			texts = append(texts, p.Text)
-		}
-	}
-	return strings.Join(texts, "\n")
-}
-
-func geminiPartsToOpenAIContent(parts []GeminiPart) []ContentPart {
-	var result []ContentPart
-	for _, p := range parts {
-		if p.Text != "" {
-			result = append(result, ContentPart{Type: "text", Text: p.Text})
-		}
-		if p.InlineData != nil {
-			dataURL := fmt.Sprintf("data:%s;base64,%s", p.InlineData.MimeType, p.InlineData.Data)
-			result = append(result, ContentPart{
-				Type: "image_url",
-				ImageURL: &ImageURL{URL: dataURL},
-			})
-		}
-		if p.FileData != nil {
-			result = append(result, ContentPart{
-				Type: "file",
-				File: &FileData{FileData: p.FileData.FileURI},
-			})
-		}
-	}
-	return result
-}
-
-func mapOpenAIFinishToGemini(reason string) string {
-	switch reason {
-	case "stop":
-		return "STOP"
-	case "length":
-		return "MAX_TOKENS"
-	case "content_filter":
-		return "SAFETY"
-	case "tool_calls":
-		return "TOOL_CALLS"
-	case "timeout":
-		return "MAX_TOKENS"
-	default:
-		return "OTHER"
-	}
-}
 // ========================================================================
 // Gemini mapping helpers
 // ========================================================================

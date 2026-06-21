@@ -91,7 +91,11 @@ func Convert(body []byte, from, to Format) ([]byte, error) {
 		if hubErr != nil {
 			return nil, fmt.Errorf("translator: %s→%s: %w", from, to, err)
 		}
-		return convertDirect(mid, FormatOpenAI, to)
+		result, hubErr2 := convertDirect(mid, FormatOpenAI, to)
+		if hubErr2 != nil {
+			return nil, fmt.Errorf("translator: %s->%s: hub via openai: %w", from, to, hubErr2)
+		}
+		return result, nil
 	}
 	return result, nil
 }

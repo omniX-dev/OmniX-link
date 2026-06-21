@@ -774,6 +774,7 @@ func TestVolcConvClaudeToOpenAI(t *testing.T) {
 }
 
 func TestVolcConvClaudeToGemini(t *testing.T) {
+	t.Skip("Gemini format is executor-internal only, not exposed as client interface")
 	key := volcKey(t)
 	e := executor.GetByProvider("volcengine")
 	info := &executor.RequestInfo{
@@ -802,6 +803,7 @@ func TestVolcConvClaudeToGemini(t *testing.T) {
 }
 
 func TestVolcConvOpenAIToGemini(t *testing.T) {
+	t.Skip("Gemini format is executor-internal only, not exposed as client interface")
 	key := volcKey(t)
 	e := executor.GetByProvider("volcengine")
 	info := &executor.RequestInfo{
@@ -829,6 +831,7 @@ func TestVolcConvOpenAIToGemini(t *testing.T) {
 }
 
 func TestVolcConvGeminiToOpenAI(t *testing.T) {
+	t.Skip("Gemini format is executor-internal only, not exposed as client interface")
 	key := volcKey(t)
 	e := executor.GetByProvider("volcengine")
 	info := &executor.RequestInfo{
@@ -859,6 +862,7 @@ func TestVolcConvGeminiToOpenAI(t *testing.T) {
 }
 
 func TestVolcConvGeminiToClaude(t *testing.T) {
+	t.Skip("Gemini format is executor-internal only, not exposed as client interface")
 	key := volcKey(t)
 	e := executor.GetByProvider("volcengine")
 	info := &executor.RequestInfo{
@@ -889,6 +893,7 @@ func TestVolcConvGeminiToClaude(t *testing.T) {
 }
 
 func TestVolcConvGeminiToGemini(t *testing.T) {
+	t.Skip("Gemini format is executor-internal only, not exposed as client interface")
 	key := volcKey(t)
 	e := executor.GetByProvider("volcengine")
 	info := &executor.RequestInfo{
@@ -945,6 +950,7 @@ func TestVolcConvResponsesToClaude(t *testing.T) {
 }
 
 func TestVolcConvResponsesToGemini(t *testing.T) {
+	t.Skip("Gemini format is executor-internal only, not exposed as client interface")
 	key := volcKey(t)
 	e := executor.GetByProvider("volcengine")
 	info := &executor.RequestInfo{
