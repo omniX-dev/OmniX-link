@@ -1,4 +1,4 @@
-package executor
+package volcengine
 
 import (
 	"encoding/json"
@@ -8,15 +8,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/just4zeroq/Omni-link/executor"
 	"github.com/just4zeroq/Omni-link/translator"
 )
 
 func init() {
-	Register("volcengine", &VolcengineExecutor{})
+	executor.Register("volcengine", &VolcengineExecutor{})
 }
 
 // VolcengineExecutor handles 火山引擎 (ByteDance/Doubao) API endpoints.
-// OpenAI-compatible with volcengine-specific URL routing.
 type VolcengineExecutor struct {
 	channel any
 }
@@ -32,13 +32,13 @@ func (e *VolcengineExecutor) GetName() string {
 	return "Volcengine"
 }
 
-func (e *VolcengineExecutor) NativeFormats() []EndpointCapability {
-	return []EndpointCapability{
-		{Format: translator.FormatOpenAI, RelayMode: translator.RelayModeChatCompletions},
+func (e *VolcengineExecutor) NativeEndpoints() []executor.Endpoint {
+	return []executor.Endpoint{
+		{Format: translator.FormatOpenAI, PathSuffix: "/api/v3/chat/completions"},
 	}
 }
 
-func (e *VolcengineExecutor) GetRequestURL(info *RequestInfo) (string, error) {
+func (e *VolcengineExecutor) GetRequestURL(info *executor.RequestInfo) (string, error) {
 	baseURL := info.BaseURL
 	if baseURL == "" {
 		baseURL = "https://ark.cn-beijing.volces.com"
@@ -50,20 +50,14 @@ func (e *VolcengineExecutor) GetRequestURL(info *RequestInfo) (string, error) {
 		model = info.Model
 	}
 
-	switch info.RelayMode {
-	case translator.RelayModeChatCompletions:
-		if strings.HasPrefix(model, "bot-") {
-			return baseURL + "/api/v3/bots/chat/completions", nil
-		}
-		return baseURL + "/api/v3/chat/completions", nil
-	case translator.RelayModeClaudeMessages:
-		return baseURL + "/api/coding/v1/messages", nil
-	default:
-		return baseURL + "/api/v3/chat/completions", nil
+	if strings.HasPrefix(model, "bot-") {
+		return baseURL + "/api/v3/bots/chat/completions", nil
 	}
+	suffix := executor.GetPathSuffix(e, info.UpstreamFormat)
+	return baseURL + suffix, nil
 }
 
-func (e *VolcengineExecutor) SetupRequestHeader(header http.Header, info *RequestInfo) error {
+func (e *VolcengineExecutor) SetupRequestHeader(header http.Header, info *executor.RequestInfo) error {
 	header.Set("Authorization", "Bearer "+info.ApiKey)
 	header.Set("Content-Type", "application/json")
 	if info.IsStream {
@@ -88,8 +82,7 @@ func (e *VolcengineExecutor) ConvertResponse(body []byte, from, to translator.Fo
 	return translator.Convert(body, from, to)
 }
 
-func (e *VolcengineExecutor) RequestCustomize(body []byte, info *RequestInfo) []byte {
-	// Model mapping
+func (e *VolcengineExecutor) RequestCustomize(body []byte, info *executor.RequestInfo) []byte {
 	if info.ActualModelName != "" {
 		var raw map[string]json.RawMessage
 		if err := json.Unmarshal(body, &raw); err == nil {
@@ -97,7 +90,6 @@ func (e *VolcengineExecutor) RequestCustomize(body []byte, info *RequestInfo) []
 			body, _ = json.Marshal(raw)
 		}
 	}
-	// Stream options
 	if info.IsStream {
 		var raw map[string]json.RawMessage
 		if err := json.Unmarshal(body, &raw); err == nil {
@@ -110,18 +102,18 @@ func (e *VolcengineExecutor) RequestCustomize(body []byte, info *RequestInfo) []
 	return body
 }
 
-func (e *VolcengineExecutor) ResponseCustomize(body []byte, info *RequestInfo) []byte {
+func (e *VolcengineExecutor) ResponseCustomize(body []byte, info *executor.RequestInfo) []byte {
 	return body
 }
 
-func (e *VolcengineExecutor) NewResponseStream(from, to translator.Format) (ResponseStream, error) {
+func (e *VolcengineExecutor) NewResponseStream(from, to translator.Format) (executor.ResponseStream, error) {
 	if from == to {
 		return nil, nil
 	}
 	return nil, nil // passthrough — volcengine responses are already OpenAI-compatible
 }
 
-func (e *VolcengineExecutor) DoRequest(info *RequestInfo, body io.Reader) (*http.Response, error) {
+func (e *VolcengineExecutor) DoRequest(info *executor.RequestInfo, body io.Reader) (*http.Response, error) {
 	reqURL, err := e.GetRequestURL(info)
 	if err != nil {
 		return nil, err

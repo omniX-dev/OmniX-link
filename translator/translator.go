@@ -26,29 +26,6 @@ const (
 	FormatOpenAIResponses Format = "openai_responses"
 )
 
-// RelayMode identifies the upstream endpoint type.
-type RelayMode string
-
-const (
-	RelayModeChatCompletions RelayMode = "chat-completions"
-	RelayModeClaudeMessages  RelayMode = "claude-messages"
-	RelayModeResponses       RelayMode = "responses"
-)
-
-// FormatRelayMode maps each Format to its default RelayMode.
-func (f Format) RelayMode() RelayMode {
-	switch f {
-	case FormatOpenAI:
-		return RelayModeChatCompletions
-	case FormatClaude:
-		return RelayModeClaudeMessages
-	case FormatOpenAIResponses:
-		return RelayModeResponses
-	default:
-		return ""
-	}
-}
-
 // EndpointPath returns the URL path for the given format.
 func (f Format) EndpointPath() string {
 	switch f {

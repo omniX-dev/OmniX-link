@@ -1,4 +1,4 @@
-package executor
+package gemini
 
 import (
 	"fmt"
@@ -7,15 +7,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/just4zeroq/Omni-link/executor"
 	"github.com/just4zeroq/Omni-link/translator"
 )
 
 func init() {
-	Register("gemini", &GeminiExecutor{})
+	executor.Register("gemini", &GeminiExecutor{})
 }
 
 // GeminiExecutor handles Google Gemini API endpoints.
-// Native format: gemini.
 type GeminiExecutor struct {
 	channel any
 }
@@ -31,13 +31,13 @@ func (e *GeminiExecutor) GetName() string {
 	return "Gemini"
 }
 
-func (e *GeminiExecutor) NativeFormats() []EndpointCapability {
-	return []EndpointCapability{
-		{Format: translator.FormatGemini, RelayMode: translator.RelayModeChatCompletions},
+func (e *GeminiExecutor) NativeEndpoints() []executor.Endpoint {
+	return []executor.Endpoint{
+		{Format: translator.FormatGemini, PathSuffix: "/v1beta/models/{model}:generateContent"},
 	}
 }
 
-func (e *GeminiExecutor) GetRequestURL(info *RequestInfo) (string, error) {
+func (e *GeminiExecutor) GetRequestURL(info *executor.RequestInfo) (string, error) {
 	baseURL := info.BaseURL
 	if baseURL == "" {
 		baseURL = "https://generativelanguage.googleapis.com"
@@ -54,7 +54,7 @@ func (e *GeminiExecutor) GetRequestURL(info *RequestInfo) (string, error) {
 	return fmt.Sprintf("%s/v1beta/models/%s:generateContent", baseURL, model), nil
 }
 
-func (e *GeminiExecutor) SetupRequestHeader(header http.Header, info *RequestInfo) error {
+func (e *GeminiExecutor) SetupRequestHeader(header http.Header, info *executor.RequestInfo) error {
 	header.Set("x-goog-api-key", info.ApiKey)
 	header.Set("Content-Type", "application/json")
 	if info.IsStream {
@@ -79,22 +79,22 @@ func (e *GeminiExecutor) ConvertResponse(body []byte, from, to translator.Format
 	return translator.Convert(body, from, to)
 }
 
-func (e *GeminiExecutor) RequestCustomize(body []byte, info *RequestInfo) []byte {
+func (e *GeminiExecutor) RequestCustomize(body []byte, info *executor.RequestInfo) []byte {
 	return body
 }
 
-func (e *GeminiExecutor) ResponseCustomize(body []byte, info *RequestInfo) []byte {
+func (e *GeminiExecutor) ResponseCustomize(body []byte, info *executor.RequestInfo) []byte {
 	return body
 }
 
-func (e *GeminiExecutor) NewResponseStream(from, to translator.Format) (ResponseStream, error) {
+func (e *GeminiExecutor) NewResponseStream(from, to translator.Format) (executor.ResponseStream, error) {
 	if from == to {
 		return nil, nil
 	}
 	return nil, nil // streaming conversion not yet implemented for gemini
 }
 
-func (e *GeminiExecutor) DoRequest(info *RequestInfo, body io.Reader) (*http.Response, error) {
+func (e *GeminiExecutor) DoRequest(info *executor.RequestInfo, body io.Reader) (*http.Response, error) {
 	reqURL, err := e.GetRequestURL(info)
 	if err != nil {
 		return nil, err

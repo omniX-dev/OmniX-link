@@ -31,7 +31,7 @@ func GetByFormat(fmt translator.Format) Executor {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 	for _, e := range registry {
-		for _, cap := range e.NativeFormats() {
+		for _, cap := range e.NativeEndpoints() {
 			if cap.Format == fmt {
 				return e
 			}

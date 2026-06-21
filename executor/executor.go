@@ -22,11 +22,11 @@ type Executor interface {
 	// GetName returns the human-readable executor name.
 	GetName() string
 
-	// NativeFormats returns the upstream formats this executor natively supports.
-	// Used by FormatPlan to choose the optimal upstream endpoint.
-	NativeFormats() []EndpointCapability
+	// NativeEndpoints returns the upstream endpoints this executor natively supports.
+	// Used by FormatPlan to choose the optimal upstream format.
+	NativeEndpoints() []Endpoint
 
-	// GetRequestURL builds the upstream request URL based on relay mode.
+	// GetRequestURL builds the upstream request URL.
 	GetRequestURL(info *RequestInfo) (string, error)
 
 	// SetupRequestHeader configures request headers (auth, content-type, etc.).
@@ -69,7 +69,7 @@ type Executor interface {
 // RequestInfo carries request-scoped metadata through the pipeline.
 type RequestInfo struct {
 	RequestID       string
-	RelayMode       translator.RelayMode
+	UpstreamFormat  translator.Format // "" = auto-resolve via Plan
 	IsStream        bool
 	Model           string
 	ActualModelName string
@@ -87,57 +87,67 @@ type RequestInfo struct {
 	MaxTokensOverride int
 }
 
-// EndpointCapability describes an upstream endpoint's native format.
-type EndpointCapability struct {
-	Format    translator.Format   `json:"format"`
-	RelayMode translator.RelayMode `json:"relay_mode"`
+// Endpoint describes an upstream endpoint an executor natively supports.
+type Endpoint struct {
+	Format     translator.Format `json:"format"`
+	PathSuffix string            `json:"path_suffix"`
 }
 
-// FormatPlan is the result of the planning algorithm.
-type FormatPlan struct {
-	UpstreamFormat    translator.Format
-	UpstreamRelayMode translator.RelayMode
-	NeedRequestConv   bool
-	NeedResponseConv  bool
+// DefaultBaseURL returns the executor's default base URL when client doesn't provide one.
+// Override in each executor to return provider-specific default.
+func DefaultBaseURL(e Executor) string {
+	entries := e.NativeEndpoints()
+	if len(entries) > 0 && entries[0].PathSuffix != "" {
+		return ""
+	}
+	return ""
 }
 
 // Plan selects the best upstream format given input/output/capabilities.
-func Plan(input, output translator.Format, capabilities []EndpointCapability) FormatPlan {
-	if len(capabilities) == 0 {
-		// No capabilities: passthrough input as upstream
-		return FormatPlan{
-			UpstreamFormat:    input,
-			UpstreamRelayMode: input.RelayMode(),
-			NeedRequestConv:   false,
-			NeedResponseConv:  output != input,
-		}
+func Plan(input, output translator.Format, endpoints []Endpoint) translator.Format {
+	if len(endpoints) == 0 {
+		return input
 	}
 
-	var best FormatPlan
+	best := input // fallback = input format
 	bestScore := 999
 
-	for _, cap := range capabilities {
-		// score = (input mismatch) + (output mismatch)
+	for _, ep := range endpoints {
 		score := 0
-		if input != cap.Format {
+		if input != ep.Format {
 			score++
 		}
-		if output != cap.Format {
+		if output != ep.Format {
 			score++
 		}
 
-		if score < bestScore || (score == bestScore && cap.Format == output) {
+		if score < bestScore || (score == bestScore && ep.Format == output) {
 			bestScore = score
-			best = FormatPlan{
-				UpstreamFormat:    cap.Format,
-				UpstreamRelayMode: cap.RelayMode,
-				NeedRequestConv:   input != cap.Format,
-				NeedResponseConv:  output != cap.Format,
-			}
+			best = ep.Format
 		}
 	}
 
 	return best
+}
+
+// SupportsFormat checks whether executor supports given upstream format.
+func SupportsFormat(e Executor, f translator.Format) bool {
+	for _, ep := range e.NativeEndpoints() {
+		if ep.Format == f {
+			return true
+		}
+	}
+	return false
+}
+
+// GetPathSuffix returns the path suffix for a given format from the executor.
+func GetPathSuffix(e Executor, format translator.Format) string {
+	for _, ep := range e.NativeEndpoints() {
+		if ep.Format == format {
+			return ep.PathSuffix
+		}
+	}
+	return format.EndpointPath()
 }
 
 // ResponseStream converts upstream SSE chunks to client-format SSE chunks.

@@ -4,129 +4,88 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"strings"
 
 	"github.com/just4zeroq/Omni-link/translator"
 )
 
-func init() {
-	Register("claude", &ClaudeExecutor{})
+// ========================================================================
+// SSE formatting helpers
+// ========================================================================
+
+func formatOpenAIChunk(data map[string]any) []byte {
+	b, _ := json.Marshal(data)
+	return []byte("data: " + string(b) + "\n\n")
 }
 
-// ClaudeExecutor handles Anthropic Claude endpoints.
-// Native format: claude (passthrough).
-type ClaudeExecutor struct {
-	channel any
+func formatClaudeEvent(event string, data map[string]any) []byte {
+	b, _ := json.Marshal(data)
+	return []byte("event: " + event + "\ndata: " + string(b) + "\n\n")
 }
 
-func (e *ClaudeExecutor) Init(channel any) {
-	e.channel = channel
-}
-
-func (e *ClaudeExecutor) GetName() string {
-	if ch, ok := e.channel.(interface{ GetName() string }); ok {
-		return ch.GetName()
+func parseSSEEventType(event []byte) string {
+	for _, line := range bytes.Split(event, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if bytes.HasPrefix(line, []byte("event: ")) {
+			return string(bytes.TrimPrefix(line, []byte("event: ")))
+		}
 	}
-	return "Claude"
+	return ""
 }
 
-func (e *ClaudeExecutor) NativeFormats() []EndpointCapability {
-	return []EndpointCapability{
-		{Format: translator.FormatClaude, RelayMode: translator.RelayModeClaudeMessages},
-	}
-}
-
-func (e *ClaudeExecutor) GetRequestURL(info *RequestInfo) (string, error) {
-	baseURL := info.BaseURL
-	if baseURL == "" {
-		baseURL = "https://api.anthropic.com/v1"
-	}
-	baseURL = strings.TrimSuffix(baseURL, "/")
-	return baseURL + "/messages", nil
-}
-
-func (e *ClaudeExecutor) SetupRequestHeader(header http.Header, info *RequestInfo) error {
-	header.Set("x-api-key", info.ApiKey)
-	header.Set("anthropic-version", "2023-06-01")
-	header.Set("Content-Type", "application/json")
-	if info.IsStream {
-		header.Set("Accept", "text/event-stream")
+func parseSSEDataField(event []byte) []byte {
+	for _, line := range bytes.Split(event, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if bytes.HasPrefix(line, []byte("data: ")) {
+			return bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data: ")))
+		}
 	}
 	return nil
 }
 
-func (e *ClaudeExecutor) ConvertRequest(body []byte, from, to translator.Format) ([]byte, error) {
-	if from == to {
-		return body, nil
-	}
-	return translator.Convert(body, from, to)
-}
-
-func (e *ClaudeExecutor) ConvertResponse(body []byte, from, to translator.Format) ([]byte, error) {
-	if from == to {
-		return body, nil
-	}
-	return translator.Convert(body, from, to)
-}
-
-func (e *ClaudeExecutor) RequestCustomize(body []byte, info *RequestInfo) []byte {
-	if info.ActualModelName != "" {
-		body = replaceModelField(body, info.ActualModelName)
-	}
-	return body
-}
-
-func (e *ClaudeExecutor) ResponseCustomize(body []byte, info *RequestInfo) []byte {
-	return body
-}
-
-func (e *ClaudeExecutor) NewResponseStream(from, to translator.Format) (ResponseStream, error) {
-	if from == to {
-		return nil, nil
-	}
-
-	switch {
-	case from == translator.FormatClaude && to == translator.FormatOpenAI:
-		return newClaudeToOpenAIStream(), nil
-	case from == translator.FormatClaude && to == translator.FormatOpenAIResponses:
-		return nil, nil
-	case from == translator.FormatOpenAI && to == translator.FormatClaude:
-		return newOpenAIToClaudeStream(), nil
+func mapStreamFinishReason(finish string) string {
+	switch finish {
+	case "end_turn":
+		return "stop"
+	case "tool_use":
+		return "tool_calls"
+	case "max_tokens":
+		return "length"
 	default:
-		return nil, fmt.Errorf("claude: streaming conversion %s→%s not implemented", from, to)
+		return finish
 	}
 }
 
-func (e *ClaudeExecutor) DoRequest(info *RequestInfo, body io.Reader) (*http.Response, error) {
-	reqURL, err := e.GetRequestURL(info)
-	if err != nil {
-		return nil, err
+func mapFinishReasonToClaude(reason string) string {
+	switch reason {
+	case "stop":
+		return "end_turn"
+	case "tool_calls":
+		return "tool_use"
+	case "length":
+		return "max_tokens"
+	default:
+		return reason
 	}
-
-	httpReq, err := http.NewRequest("POST", reqURL, body)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	if err := e.SetupRequestHeader(httpReq.Header, info); err != nil {
-		return nil, err
-	}
-
-	client := &http.Client{}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("do request: %w", err)
-	}
-	return resp, nil
 }
 
+func randHex(n int) string {
+	const hexChars = "0123456789abcdef"
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = hexChars[int(streamRandState%16)]
+		streamRandState = streamRandState*6364136223846793005 + 1442695040888963407
+	}
+	return string(b)
+}
+
+var streamRandState uint64 = 1442695040888963407
+
 // ========================================================================
-// ResponseStream: Claude SSE ↔ OpenAI Chat SSE
+// ClaudeToOpenAIStream — Claude SSE → OpenAI Chat SSE
 // ========================================================================
 
-// claudeToOpenAIStream converts Claude SSE events to OpenAI Chat format SSE.
-type claudeToOpenAIStream struct {
+// ClaudeToOpenAIStream converts Claude SSE events to OpenAI Chat format SSE.
+type ClaudeToOpenAIStream struct {
 	buf       bytes.Buffer
 	blockIdx  int
 	msgID     string
@@ -135,11 +94,12 @@ type claudeToOpenAIStream struct {
 	finished  bool
 }
 
-func newClaudeToOpenAIStream() *claudeToOpenAIStream {
-	return &claudeToOpenAIStream{blockIdx: -1}
+// NewClaudeToOpenAIStream creates a new Claude→OpenAI stream converter.
+func NewClaudeToOpenAIStream() *ClaudeToOpenAIStream {
+	return &ClaudeToOpenAIStream{blockIdx: -1}
 }
 
-func (s *claudeToOpenAIStream) Feed(chunk []byte) ([]byte, error) {
+func (s *ClaudeToOpenAIStream) Feed(chunk []byte) ([]byte, error) {
 	s.buf.Write(chunk)
 	if !bytes.Contains(s.buf.Bytes(), []byte("\n\n")) {
 		return nil, nil
@@ -171,7 +131,7 @@ func (s *claudeToOpenAIStream) Feed(chunk []byte) ([]byte, error) {
 	return out, nil
 }
 
-func (s *claudeToOpenAIStream) End() ([]byte, error) {
+func (s *ClaudeToOpenAIStream) End() ([]byte, error) {
 	if s.finished {
 		return nil, nil
 	}
@@ -187,11 +147,11 @@ func (s *claudeToOpenAIStream) End() ([]byte, error) {
 	return []byte("data: [DONE]\n\n"), nil
 }
 
-func (s *claudeToOpenAIStream) Usage() *translator.Usage {
+func (s *ClaudeToOpenAIStream) Usage() *translator.Usage {
 	return s.usage
 }
 
-func (s *claudeToOpenAIStream) convertEvent(event []byte) ([]byte, error) {
+func (s *ClaudeToOpenAIStream) convertEvent(event []byte) ([]byte, error) {
 	eventType := parseSSEEventType(event)
 	if eventType == "" {
 		return nil, fmt.Errorf("no event type")
@@ -222,7 +182,7 @@ func (s *claudeToOpenAIStream) convertEvent(event []byte) ([]byte, error) {
 	}
 }
 
-func (s *claudeToOpenAIStream) onMessageStart(data []byte) ([]byte, error) {
+func (s *ClaudeToOpenAIStream) onMessageStart(data []byte) ([]byte, error) {
 	var msg struct {
 		Type    string `json:"type"`
 		Message struct {
@@ -239,7 +199,7 @@ func (s *claudeToOpenAIStream) onMessageStart(data []byte) ([]byte, error) {
 	return nil, nil
 }
 
-func (s *claudeToOpenAIStream) onContentBlockStart(data []byte) ([]byte, error) {
+func (s *ClaudeToOpenAIStream) onContentBlockStart(data []byte) ([]byte, error) {
 	var block struct {
 		Type         string `json:"type"`
 		Index        int    `json:"index"`
@@ -283,7 +243,7 @@ func (s *claudeToOpenAIStream) onContentBlockStart(data []byte) ([]byte, error) 
 	}
 }
 
-func (s *claudeToOpenAIStream) onContentBlockDelta(data []byte) ([]byte, error) {
+func (s *ClaudeToOpenAIStream) onContentBlockDelta(data []byte) ([]byte, error) {
 	var delta struct {
 		Type  string `json:"type"`
 		Index int    `json:"index"`
@@ -322,11 +282,11 @@ func (s *claudeToOpenAIStream) onContentBlockDelta(data []byte) ([]byte, error) 
 	}
 }
 
-func (s *claudeToOpenAIStream) onContentBlockStop() ([]byte, error) {
+func (s *ClaudeToOpenAIStream) onContentBlockStop() ([]byte, error) {
 	return nil, nil
 }
 
-func (s *claudeToOpenAIStream) onMessageDelta(data []byte) ([]byte, error) {
+func (s *ClaudeToOpenAIStream) onMessageDelta(data []byte) ([]byte, error) {
 	var msg struct {
 		Type  string `json:"type"`
 		Delta struct {
@@ -358,16 +318,16 @@ func (s *claudeToOpenAIStream) onMessageDelta(data []byte) ([]byte, error) {
 	}), nil
 }
 
-func (s *claudeToOpenAIStream) onMessageStop() ([]byte, error) {
-	s.finished = true
+func (s *ClaudeToOpenAIStream) onMessageStop() ([]byte, error) {
 	return nil, nil
 }
 
 // ========================================================================
-// openAIToClaudeStream — OpenAI Chat SSE → Claude SSE
+// OpenAIToClaudeStream — OpenAI Chat SSE → Claude SSE
 // ========================================================================
 
-type openAIToClaudeStream struct {
+// OpenAIToClaudeStream converts OpenAI Chat format SSE to Claude SSE events.
+type OpenAIToClaudeStream struct {
 	buf        bytes.Buffer
 	blockIdx   int
 	hasStarted bool
@@ -376,11 +336,12 @@ type openAIToClaudeStream struct {
 	finished   bool
 }
 
-func newOpenAIToClaudeStream() *openAIToClaudeStream {
-	return &openAIToClaudeStream{}
+// NewOpenAIToClaudeStream creates a new OpenAI→Claude stream converter.
+func NewOpenAIToClaudeStream() *OpenAIToClaudeStream {
+	return &OpenAIToClaudeStream{}
 }
 
-func (s *openAIToClaudeStream) Feed(chunk []byte) ([]byte, error) {
+func (s *OpenAIToClaudeStream) Feed(chunk []byte) ([]byte, error) {
 	s.buf.Write(chunk)
 	if !bytes.Contains(s.buf.Bytes(), []byte("\n\n")) {
 		return nil, nil
@@ -412,7 +373,7 @@ func (s *openAIToClaudeStream) Feed(chunk []byte) ([]byte, error) {
 	return out, nil
 }
 
-func (s *openAIToClaudeStream) End() ([]byte, error) {
+func (s *OpenAIToClaudeStream) End() ([]byte, error) {
 	if s.finished {
 		return nil, nil
 	}
@@ -437,11 +398,11 @@ func (s *openAIToClaudeStream) End() ([]byte, error) {
 	return out, nil
 }
 
-func (s *openAIToClaudeStream) Usage() *translator.Usage {
+func (s *OpenAIToClaudeStream) Usage() *translator.Usage {
 	return s.usage
 }
 
-func (s *openAIToClaudeStream) convertChunk(line []byte) ([]byte, error) {
+func (s *OpenAIToClaudeStream) convertChunk(line []byte) ([]byte, error) {
 	if !bytes.HasPrefix(line, []byte("data: ")) {
 		return nil, nil
 	}
@@ -557,75 +518,3 @@ func (s *openAIToClaudeStream) convertChunk(line []byte) ([]byte, error) {
 
 	return out, nil
 }
-
-// ========================================================================
-// SSE formatting helpers
-// ========================================================================
-
-func formatOpenAIChunk(data map[string]any) []byte {
-	b, _ := json.Marshal(data)
-	return []byte("data: " + string(b) + "\n\n")
-}
-
-func formatClaudeEvent(event string, data map[string]any) []byte {
-	b, _ := json.Marshal(data)
-	return []byte("event: " + event + "\ndata: " + string(b) + "\n\n")
-}
-
-func parseSSEEventType(event []byte) string {
-	for _, line := range bytes.Split(event, []byte("\n")) {
-		line = bytes.TrimSpace(line)
-		if bytes.HasPrefix(line, []byte("event: ")) {
-			return string(bytes.TrimPrefix(line, []byte("event: ")))
-		}
-	}
-	return ""
-}
-
-func parseSSEDataField(event []byte) []byte {
-	for _, line := range bytes.Split(event, []byte("\n")) {
-		line = bytes.TrimSpace(line)
-		if bytes.HasPrefix(line, []byte("data: ")) {
-			return bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data: ")))
-		}
-	}
-	return nil
-}
-
-func mapStreamFinishReason(finish string) string {
-	switch finish {
-	case "end_turn":
-		return "stop"
-	case "tool_use":
-		return "tool_calls"
-	case "max_tokens":
-		return "length"
-	default:
-		return finish
-	}
-}
-
-func mapFinishReasonToClaude(reason string) string {
-	switch reason {
-	case "stop":
-		return "end_turn"
-	case "tool_calls":
-		return "tool_use"
-	case "length":
-		return "max_tokens"
-	default:
-		return reason
-	}
-}
-
-func randHex(n int) string {
-	const hexChars = "0123456789abcdef"
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = hexChars[int(streamRandState%16)]
-		streamRandState = streamRandState*6364136223846793005 + 1442695040888963407
-	}
-	return string(b)
-}
-
-var streamRandState uint64 = 1442695040888963407

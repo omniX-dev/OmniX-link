@@ -126,7 +126,7 @@ Requires valid DeepSeek API key. Tests real API calls via:
 **DeepSeek API**:
 - OpenAI format: `https://api.deepseek.com/v1/chat/completions` (auth: `Authorization: Bearer`)
 - Claude format: `https://api.deepseek.com/anthropic/v1/messages` (auth: `x-api-key`)
-- `RelayMode` controls auth header and URL path selection
+- `UpstreamFormat` controls auth header and URL path selection
 - Notable: `deepseek-chat` model resolves to `deepseek-v4-flash` upstream
 
 ## Common operations

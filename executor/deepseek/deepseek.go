@@ -1,4 +1,4 @@
-package executor
+package deepseek
 
 import (
 	"encoding/json"
@@ -7,15 +7,15 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/just4zeroq/Omni-link/executor"
 	"github.com/just4zeroq/Omni-link/translator"
 )
 
 func init() {
-	Register("deepseek", &DeepSeekExecutor{})
+	executor.Register("deepseek", &DeepSeekExecutor{})
 }
 
 // DeepSeekExecutor handles DeepSeek API with OpenAI and Claude endpoints.
-// Native formats: openai (chat completions), claude (messages).
 type DeepSeekExecutor struct {
 	channel any
 }
@@ -31,33 +31,27 @@ func (e *DeepSeekExecutor) GetName() string {
 	return "DeepSeek"
 }
 
-func (e *DeepSeekExecutor) NativeFormats() []EndpointCapability {
-	return []EndpointCapability{
-		{Format: translator.FormatOpenAI, RelayMode: translator.RelayModeChatCompletions},
-		{Format: translator.FormatClaude, RelayMode: translator.RelayModeClaudeMessages},
+func (e *DeepSeekExecutor) NativeEndpoints() []executor.Endpoint {
+	return []executor.Endpoint{
+		{Format: translator.FormatOpenAI, PathSuffix: "/v1/chat/completions"},
+		{Format: translator.FormatClaude, PathSuffix: "/anthropic/v1/messages"},
 	}
 }
 
-func (e *DeepSeekExecutor) GetRequestURL(info *RequestInfo) (string, error) {
+func (e *DeepSeekExecutor) GetRequestURL(info *executor.RequestInfo) (string, error) {
 	baseURL := info.BaseURL
 	if baseURL == "" {
 		baseURL = "https://api.deepseek.com"
 	}
 	baseURL = strings.TrimSuffix(baseURL, "/")
 
-	switch info.RelayMode {
-	case translator.RelayModeChatCompletions:
-		return baseURL + "/v1/chat/completions", nil
-	case translator.RelayModeClaudeMessages:
-		return baseURL + "/anthropic/v1/messages", nil
-	default:
-		return baseURL + "/v1/chat/completions", nil
-	}
+	suffix := executor.GetPathSuffix(e, info.UpstreamFormat)
+	return baseURL + suffix, nil
 }
 
-func (e *DeepSeekExecutor) SetupRequestHeader(header http.Header, info *RequestInfo) error {
-	switch info.RelayMode {
-	case translator.RelayModeClaudeMessages:
+func (e *DeepSeekExecutor) SetupRequestHeader(header http.Header, info *executor.RequestInfo) error {
+	switch info.UpstreamFormat {
+	case translator.FormatClaude:
 		header.Set("x-api-key", info.ApiKey)
 		header.Set("anthropic-version", "2023-06-01")
 	default:
@@ -86,37 +80,37 @@ func (e *DeepSeekExecutor) ConvertResponse(body []byte, from, to translator.Form
 	return translator.Convert(body, from, to)
 }
 
-func (e *DeepSeekExecutor) RequestCustomize(body []byte, info *RequestInfo) []byte {
+func (e *DeepSeekExecutor) RequestCustomize(body []byte, info *executor.RequestInfo) []byte {
 	if info.ActualModelName != "" {
-		body = replaceModelField(body, info.ActualModelName)
+		body = executor.ReplaceModelField(body, info.ActualModelName)
 	}
-	if info.IsStream && info.RelayMode == translator.RelayModeChatCompletions {
-		body = injectStreamOptionsOpenAI(body)
+	if info.IsStream && info.UpstreamFormat == translator.FormatOpenAI {
+		body = executor.InjectStreamOptionsOpenAI(body)
 	}
 	body = dsInjectThinking(body, info)
 	return body
 }
 
-func (e *DeepSeekExecutor) ResponseCustomize(body []byte, info *RequestInfo) []byte {
+func (e *DeepSeekExecutor) ResponseCustomize(body []byte, info *executor.RequestInfo) []byte {
 	return body
 }
 
-func (e *DeepSeekExecutor) NewResponseStream(from, to translator.Format) (ResponseStream, error) {
+func (e *DeepSeekExecutor) NewResponseStream(from, to translator.Format) (executor.ResponseStream, error) {
 	if from == to {
 		return nil, nil
 	}
 
 	switch {
 	case from == translator.FormatClaude && to == translator.FormatOpenAI:
-		return newClaudeToOpenAIStream(), nil
+		return executor.NewClaudeToOpenAIStream(), nil
 	case from == translator.FormatOpenAI && to == translator.FormatClaude:
-		return newOpenAIToClaudeStream(), nil
+		return executor.NewOpenAIToClaudeStream(), nil
 	default:
 		return nil, fmt.Errorf("deepseek: streaming conversion %s→%s not implemented", from, to)
 	}
 }
 
-func (e *DeepSeekExecutor) DoRequest(info *RequestInfo, body io.Reader) (*http.Response, error) {
+func (e *DeepSeekExecutor) DoRequest(info *executor.RequestInfo, body io.Reader) (*http.Response, error) {
 	reqURL, err := e.GetRequestURL(info)
 	if err != nil {
 		return nil, err
@@ -143,7 +137,7 @@ func (e *DeepSeekExecutor) DoRequest(info *RequestInfo, body io.Reader) (*http.R
 // ========================================================================
 
 // dsInjectThinking injects DeepSeek's thinking/reasoning configuration.
-func dsInjectThinking(body []byte, info *RequestInfo) []byte {
+func dsInjectThinking(body []byte, info *executor.RequestInfo) []byte {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return body
