@@ -1,4 +1,4 @@
-# OmniX-link
+# Omni-link
 
 **Universal AI Protocol Translation Library** — Go library bridging AI API formats across text, image, audio, and video.
 
