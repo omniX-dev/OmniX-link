@@ -35,6 +35,7 @@ func (e *VolcengineExecutor) GetName() string {
 func (e *VolcengineExecutor) NativeEndpoints() []executor.Endpoint {
 	return []executor.Endpoint{
 		{Format: translator.FormatOpenAI, PathSuffix: "/api/v3/chat/completions"},
+		{Format: translator.FormatOpenAIResponses, PathSuffix: "/api/v3/responses"},
 	}
 }
 
@@ -90,7 +91,7 @@ func (e *VolcengineExecutor) RequestCustomize(body []byte, info *executor.Reques
 			body, _ = json.Marshal(raw)
 		}
 	}
-	if info.IsStream {
+	if info.IsStream && info.UpstreamFormat == translator.FormatOpenAI {
 		var raw map[string]json.RawMessage
 		if err := json.Unmarshal(body, &raw); err == nil {
 			if _, exists := raw["stream_options"]; !exists {

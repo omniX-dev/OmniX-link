@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,12 +25,43 @@ const (
 
 func deepSeekKey(t *testing.T) string {
 	t.Helper()
+	tryLoadEnv()
 	k := os.Getenv("DEEPSEEK_API_KEY")
 	if k == "" {
 		t.Skip("DEEPSEEK_API_KEY not set")
 	}
 	return k
 }
+
+// tryLoadEnv loads .env once per package.
+func tryLoadEnv() {
+	loadOnce.Do(func() {
+		paths := []string{".env", "../.env", "../../.env"}
+		for _, p := range paths {
+			data, err := os.ReadFile(p)
+			if err != nil {
+				continue
+			}
+			for _, line := range strings.Split(string(data), "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" || strings.HasPrefix(line, "#") {
+					continue
+				}
+				parts := strings.SplitN(line, "=", 2)
+				if len(parts) == 2 {
+					k := strings.TrimSpace(parts[0])
+					v := strings.TrimSpace(parts[1])
+					if os.Getenv(k) == "" {
+						os.Setenv(k, v)
+					}
+				}
+			}
+			return // found and loaded
+		}
+	})
+}
+
+var loadOnce sync.Once
 
 var httpClient = &http.Client{}
 

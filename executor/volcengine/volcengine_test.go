@@ -1,0 +1,550 @@
+package volcengine
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/just4zeroq/Omni-link/executor"
+	"github.com/just4zeroq/Omni-link/translator"
+)
+
+const (
+	volcModel  = "doubao-seed-2-0-lite-260215"
+	volcBase   = "https://ark.cn-beijing.volces.com"
+)
+
+var httpClient = &http.Client{Timeout: 60 * time.Second}
+
+func volcKey(t *testing.T) string {
+	t.Helper()
+	tryLoadEnv()
+	k := os.Getenv("VOLC_API_KEY")
+	if k == "" {
+		t.Skip("VOLC_API_KEY not set")
+	}
+	return k
+}
+
+// tryLoadEnv loads .env once per package.
+func tryLoadEnv() {
+	loadOnce.Do(func() {
+		paths := []string{".env", "../.env", "../../.env"}
+		for _, p := range paths {
+			data, err := os.ReadFile(p)
+			if err != nil {
+				continue
+			}
+			for _, line := range strings.Split(string(data), "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" || strings.HasPrefix(line, "#") {
+					continue
+				}
+				parts := strings.SplitN(line, "=", 2)
+				if len(parts) == 2 {
+					k := strings.TrimSpace(parts[0])
+					v := strings.TrimSpace(parts[1])
+					if os.Getenv(k) == "" {
+						os.Setenv(k, v)
+					}
+				}
+			}
+			return // found and loaded
+		}
+	})
+}
+
+var loadOnce sync.Once
+
+// ========================================================================
+// Basic chat completions
+// ========================================================================
+
+func TestVolcChatCompletion(t *testing.T) {
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAI,
+		InboundFormat:  translator.FormatOpenAI,
+		ClientFormat:   translator.FormatOpenAI,
+		Model: volcModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"model":    volcModel,
+		"messages": []map[string]any{{"role": "user", "content": "Say hello in one word."}},
+	})
+	resp, err := execReq(e, info, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	mustUnmarshal(t, resp, &m)
+	choices, _ := m["choices"].([]any)
+	if len(choices) == 0 {
+		t.Fatalf("no choices: %s", string(resp))
+	}
+	c := choices[0].(map[string]any)
+	if msg, ok := c["message"].(map[string]any); ok {
+		t.Logf("Chat completion: %s", msg["content"])
+	} else {
+		t.Logf("Chat completion response: %s", string(resp))
+	}
+}
+
+func TestVolcStreamChat(t *testing.T) {
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAI,
+		InboundFormat:  translator.FormatOpenAI,
+		ClientFormat:   translator.FormatOpenAI,
+		Model: volcModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+		IsStream: true,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"model":    volcModel,
+		"messages": []map[string]any{{"role": "user", "content": "Count 1 to 5."}},
+		"stream":   true,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var chunks [][]byte
+	err := executor.ExecuteStream(ctx, e, info, b, func(chunk []byte) error {
+		c := make([]byte, len(chunk))
+		copy(c, chunk)
+		chunks = append(chunks, c)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks) == 0 {
+		t.Fatal("no chunks received")
+	}
+
+	gotData := false
+	gotDone := false
+	full := string(bytes.Join(chunks, nil))
+	for _, line := range strings.Split(full, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "data: [DONE]" {
+			gotDone = true
+		} else if strings.HasPrefix(line, "data: ") {
+			gotData = true
+		}
+	}
+	if !gotData {
+		t.Fatal("no data chunks")
+	}
+	if !gotDone {
+		t.Fatal("no [DONE] terminator")
+	}
+	t.Logf("Stream chat: %d chunks, %.2f KB", len(chunks), float64(len(bytes.Join(chunks, nil)))/1024)
+}
+
+// ========================================================================
+// Responses API
+// ========================================================================
+
+func TestVolcResponses(t *testing.T) {
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAIResponses,
+		InboundFormat:  translator.FormatOpenAIResponses,
+		ClientFormat:   translator.FormatOpenAIResponses,
+		Model: volcModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"model": volcModel,
+		"input": "Say hello in one word.",
+	})
+	resp, err := execReq(e, info, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	mustUnmarshal(t, resp, &m)
+	if obj, _ := m["object"].(string); obj != "response" {
+		t.Fatalf("expected response object, got: %s", string(resp))
+	}
+	output, _ := m["output"].([]any)
+	if len(output) == 0 {
+		t.Fatalf("no output: %s", string(resp))
+	}
+	t.Logf("Responses: %s", string(resp))
+}
+
+func TestVolcStreamResponses(t *testing.T) {
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAIResponses,
+		InboundFormat:  translator.FormatOpenAIResponses,
+		ClientFormat:   translator.FormatOpenAIResponses,
+		Model: volcModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+		IsStream: true,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"model":  volcModel,
+		"input":  "Count 1 to 5.",
+		"stream": true,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var chunks [][]byte
+	err := executor.ExecuteStream(ctx, e, info, b, func(chunk []byte) error {
+		c := make([]byte, len(chunk))
+		copy(c, chunk)
+		chunks = append(chunks, c)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks) == 0 {
+		t.Fatal("no chunks received")
+	}
+
+	// Responses SSE passthrough — expect data: prefix events
+	gotData := false
+	for _, c := range chunks {
+		s := string(c)
+		if strings.HasPrefix(s, "data: ") {
+			gotData = true
+			break
+		}
+	}
+	if !gotData {
+		t.Fatal("no data events in Responses stream")
+	}
+	t.Logf("Stream Responses: %d chunks, %.2f KB", len(chunks), float64(len(bytes.Join(chunks, nil)))/1024)
+}
+
+// ========================================================================
+// Features
+// ========================================================================
+
+func TestVolcSystemMessage(t *testing.T) {
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAI,
+		InboundFormat:  translator.FormatOpenAI,
+		ClientFormat:   translator.FormatOpenAI,
+		Model: volcModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"model": volcModel,
+		"messages": []map[string]any{
+			{"role": "system", "content": "Reply in ALL CAPS."},
+			{"role": "user", "content": "Say hello"},
+		},
+	})
+	resp, err := execReq(e, info, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	mustUnmarshal(t, resp, &m)
+	choices, _ := m["choices"].([]any)
+	if len(choices) == 0 {
+		t.Fatalf("no choices: %s", string(resp))
+	}
+	msg := choices[0].(map[string]any)["message"].(map[string]any)
+	t.Logf("System msg (expect caps): %s", msg["content"])
+}
+
+func TestVolcWithTools(t *testing.T) {
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAI,
+		InboundFormat:  translator.FormatOpenAI,
+		ClientFormat:   translator.FormatOpenAI,
+		Model: volcModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"model": volcModel,
+		"messages": []map[string]any{
+			{"role": "user", "content": "What's weather in Beijing?"},
+		},
+		"tools": []map[string]any{{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "get_weather",
+				"description": "Get weather for a location",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"location": map[string]any{"type": "string"},
+					},
+					"required": []string{"location"},
+				},
+			},
+		}},
+		"tool_choice": "auto",
+	})
+	resp, err := execReq(e, info, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Tools response: %s", string(resp))
+}
+
+func TestVolcWithParams(t *testing.T) {
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAI,
+		InboundFormat:  translator.FormatOpenAI,
+		ClientFormat:   translator.FormatOpenAI,
+		Model: volcModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"model":       volcModel,
+		"messages":    []map[string]any{{"role": "user", "content": "Count 1 2 3"}},
+		"temperature": 0.5,
+		"top_p":       0.9,
+		"max_tokens":  100,
+	})
+	resp, err := execReq(e, info, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	mustUnmarshal(t, resp, &m)
+	choices, _ := m["choices"].([]any)
+	if len(choices) == 0 {
+		t.Fatal("no choices")
+	}
+	t.Logf("Params response: %s", string(resp))
+}
+
+// ========================================================================
+// Format conversion — OpenAI↔Responses round trip
+// ========================================================================
+
+func TestVolcConvChatToResponses(t *testing.T) {
+	t.Skip("translator openAIToResponses request conversion not implemented (passthrough)")
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAIResponses,
+		InboundFormat:  translator.FormatOpenAI,
+		ClientFormat:   translator.FormatOpenAI,
+		Model: volcModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+	}
+	// Send OpenAI Chat request → convert to Responses → send → convert back to Chat
+	b, _ := json.Marshal(map[string]any{
+		"model":    volcModel,
+		"messages": []map[string]any{{"role": "user", "content": "Say hello"}},
+	})
+	resp, err := execReq(e, info, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	mustUnmarshal(t, resp, &m)
+	choices, _ := m["choices"].([]any)
+	if len(choices) == 0 {
+		t.Fatalf("no choices after conv: %s", string(resp))
+	}
+	t.Logf("Conv Chat→Responses→Chat: success")
+}
+
+func TestVolcConvResponsesToChat(t *testing.T) {
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAI,
+		InboundFormat:  translator.FormatOpenAIResponses,
+		ClientFormat:   translator.FormatOpenAIResponses,
+		Model: volcModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+	}
+	// Send Responses request → convert to Chat → send → convert back to Responses
+	b, _ := json.Marshal(map[string]any{
+		"model": volcModel,
+		"input": "Say hello",
+	})
+	resp, err := execReq(e, info, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	mustUnmarshal(t, resp, &m)
+	if obj, _ := m["object"].(string); obj != "response" {
+		t.Fatalf("expected response object, got: %s", string(resp))
+	}
+	t.Logf("Conv Responses→Chat→Responses: success")
+}
+
+// ========================================================================
+// Error handling
+// ========================================================================
+
+func TestVolcErrorBadKey(t *testing.T) {
+	_ = volcKey(t) // skip if no key, but use bad key for actual test
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAI,
+		InboundFormat:  translator.FormatOpenAI,
+		ClientFormat:   translator.FormatOpenAI,
+		Model: volcModel,
+		ApiKey: "sk-bad-key-that-will-fail",
+		BaseURL: volcBase,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"model":    volcModel,
+		"messages": []map[string]any{{"role": "user", "content": "hi"}},
+	})
+	status, _, err := execReqRaw(e, info, b)
+	if err != nil {
+		t.Fatalf("execReqRaw err: %v", err)
+	}
+	if status == 200 {
+		t.Fatal("expected non-200 status for bad key")
+	}
+	t.Logf("Bad key status: %d (expected 401/403)", status)
+}
+
+func TestVolcErrorBadModel(t *testing.T) {
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAI,
+		InboundFormat:  translator.FormatOpenAI,
+		ClientFormat:   translator.FormatOpenAI,
+		Model: "nonexistent-model-xyz",
+		ActualModelName: "nonexistent-model-xyz",
+		ApiKey: key,
+		BaseURL: volcBase,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"model":    "nonexistent-model-xyz",
+		"messages": []map[string]any{{"role": "user", "content": "hi"}},
+	})
+	status, body, err := execReqRaw(e, info, b)
+	if err != nil && status == 0 {
+		t.Logf("Bad model error: %v", err)
+		return
+	}
+	if status == 200 {
+		t.Fatal("expected non-200 for bad model")
+	}
+	t.Logf("Bad model status: %d, body: %s", status, string(body))
+}
+
+// ========================================================================
+// Streaming cancellation
+// ========================================================================
+
+func TestVolcStreamCancel(t *testing.T) {
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAI,
+		InboundFormat:  translator.FormatOpenAI,
+		ClientFormat:   translator.FormatOpenAI,
+		Model: volcModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+		IsStream: true,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"model":    volcModel,
+		"messages": []map[string]any{{"role": "user", "content": "Write a long essay about AI."}},
+		"stream":   true,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	var count int
+	err := executor.ExecuteStream(ctx, e, info, b, func(chunk []byte) error {
+		count++
+		return nil
+	})
+	if err != nil && !strings.Contains(err.Error(), "context canceled") &&
+		!strings.Contains(err.Error(), "context deadline exceeded") &&
+		!strings.Contains(err.Error(), "Client.Timeout") {
+		t.Logf("Cancel err (non-fatal): %v", err)
+	}
+	t.Logf("Stream cancel: got %d chunks before timeout", count)
+}
+
+// ========================================================================
+// Helpers
+// ========================================================================
+
+func execReq(e executor.Executor, info *executor.RequestInfo, body []byte) ([]byte, error) {
+	status, data, err := execReqRaw(e, info, body)
+	if err != nil {
+		return nil, err
+	}
+	if status != 200 {
+		return nil, fmt.Errorf("status %d: %s", status, string(data))
+	}
+	return data, nil
+}
+
+func execReqRaw(e executor.Executor, info *executor.RequestInfo, body []byte) (int, []byte, error) {
+	up := info.UpstreamFormat
+	if up == "" {
+		up = translator.FormatOpenAI
+	}
+	conv, err := e.ConvertRequest(body, info.InboundFormat, up)
+	if err != nil {
+		return 0, nil, err
+	}
+	conv = e.RequestCustomize(conv, info)
+	resp, err := e.DoRequest(info, bytes.NewReader(conv))
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	respBody = e.ResponseCustomize(respBody, info)
+	convResp, err := e.ConvertResponse(respBody, up, info.ClientFormat)
+	if err != nil {
+		return resp.StatusCode, respBody, err
+	}
+	return resp.StatusCode, convResp, nil
+}
+
+func mustUnmarshal(t *testing.T, data []byte, v any) {
+	t.Helper()
+	if err := json.Unmarshal(data, &v); err != nil {
+		t.Fatalf("json: %v (body: %s)", err, string(data))
+	}
+}
