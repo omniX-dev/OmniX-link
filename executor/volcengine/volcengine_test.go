@@ -711,6 +711,273 @@ func TestVolcOutputConvOpenAIToClaude(t *testing.T) {
 }
 
 // ========================================================================
+// Full format conversion matrix — volcengine Chat endpoint
+// Each test: send InboundFormat → convert to OpenAI Chat → convert response to ClientFormat
+// ========================================================================
+
+func TestVolcConvClaudeToClaude(t *testing.T) {
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		InboundFormat: translator.FormatClaude,
+		ClientFormat:  translator.FormatClaude,
+		Model: volcModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+	}
+	// Plan: In=Claude, Out=Claude → candidates [OpenAI, Responses]
+	// → both score 1 → tie → first = OpenAI
+	// → conv request Claude→OpenAI, Chat endpoint, conv response OpenAI→Claude
+	b, _ := json.Marshal(map[string]any{
+		"model":      volcModel,
+		"messages":   []map[string]any{{"role": "user", "content": "Say hello"}},
+		"max_tokens": 4096,
+	})
+	resp, err := executor.Request(e, info, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	mustUnmarshal(t, resp, &m)
+	if _, ok := m["content"]; !ok {
+		t.Fatalf("no content (expected Claude format): %s", string(resp))
+	}
+	t.Logf("Conv Claude->Claude: success")
+}
+
+func TestVolcConvClaudeToOpenAI(t *testing.T) {
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAI,
+		InboundFormat:  translator.FormatClaude,
+		ClientFormat:   translator.FormatOpenAI,
+		Model: volcModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"model":      volcModel,
+		"messages":   []map[string]any{{"role": "user", "content": "Say hello"}},
+		"max_tokens": 4096,
+	})
+	resp, err := execReq(e, info, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	mustUnmarshal(t, resp, &m)
+	if _, ok := m["choices"]; !ok {
+		t.Fatalf("no choices (expected OpenAI format): %s", string(resp))
+	}
+	t.Logf("Conv Claude->OpenAI: success")
+}
+
+func TestVolcConvClaudeToGemini(t *testing.T) {
+	t.Skip("translator openAIToGeminiResponse passthrough — not implemented")
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAI,
+		InboundFormat:  translator.FormatClaude,
+		ClientFormat:   translator.FormatGemini,
+		Model: volcModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"model":      volcModel,
+		"messages":   []map[string]any{{"role": "user", "content": "Say hello"}},
+		"max_tokens": 4096,
+	})
+	resp, err := execReq(e, info, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	mustUnmarshal(t, resp, &m)
+	if _, ok := m["candidates"]; !ok {
+		t.Fatalf("no candidates (expected Gemini format): %s", string(resp))
+	}
+	t.Logf("Conv Claude->Gemini: success")
+}
+
+func TestVolcConvOpenAIToGemini(t *testing.T) {
+	t.Skip("translator openAIToGeminiResponse passthrough — not implemented")
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAI,
+		InboundFormat:  translator.FormatOpenAI,
+		ClientFormat:   translator.FormatGemini,
+		Model: volcModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"model":    volcModel,
+		"messages": []map[string]any{{"role": "user", "content": "Say hello"}},
+	})
+	resp, err := execReq(e, info, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	mustUnmarshal(t, resp, &m)
+	if _, ok := m["candidates"]; !ok {
+		t.Fatalf("no candidates (expected Gemini format): %s", string(resp))
+	}
+	t.Logf("Conv OpenAI->Gemini: success")
+}
+
+func TestVolcConvGeminiToOpenAI(t *testing.T) {
+	t.Skip("translator geminiToOpenAI request not implemented (passthrough)")
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAI,
+		InboundFormat:  translator.FormatGemini,
+		ClientFormat:   translator.FormatOpenAI,
+		Model: volcModel,
+		ActualModelName: volcModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"contents": []map[string]any{{
+			"role": "user",
+			"parts": []map[string]any{{"text": "Say hello"}},
+		}},
+	})
+	resp, err := execReq(e, info, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	mustUnmarshal(t, resp, &m)
+	if _, ok := m["choices"]; !ok {
+		t.Fatalf("no choices (expected OpenAI format): %s", string(resp))
+	}
+	t.Logf("Conv Gemini->OpenAI: success")
+}
+
+func TestVolcConvGeminiToClaude(t *testing.T) {
+	t.Skip("translator geminiToOpenAI/Claude request not implemented (passthrough)")
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAI,
+		InboundFormat:  translator.FormatGemini,
+		ClientFormat:   translator.FormatClaude,
+		Model: volcModel,
+		ActualModelName: volcModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"contents": []map[string]any{{
+			"role": "user",
+			"parts": []map[string]any{{"text": "Say hello"}},
+		}},
+	})
+	resp, err := execReq(e, info, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	mustUnmarshal(t, resp, &m)
+	if _, ok := m["content"]; !ok {
+		t.Fatalf("no content (expected Claude format): %s", string(resp))
+	}
+	t.Logf("Conv Gemini->Claude: success")
+}
+
+func TestVolcConvGeminiToGemini(t *testing.T) {
+	t.Skip("translator openAIToGeminiResponse passthrough — not implemented")
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAI,
+		InboundFormat:  translator.FormatGemini,
+		ClientFormat:   translator.FormatGemini,
+		Model: volcModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"contents": []map[string]any{{
+			"role": "user",
+			"parts": []map[string]any{{"text": "Say hello"}},
+		}},
+	})
+	resp, err := execReq(e, info, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	mustUnmarshal(t, resp, &m)
+	if _, ok := m["candidates"]; !ok {
+		t.Fatalf("no candidates (expected Gemini format): %s", string(resp))
+	}
+	t.Logf("Conv Gemini->Gemini: success")
+}
+
+func TestVolcConvResponsesToClaude(t *testing.T) {
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAI,
+		InboundFormat:  translator.FormatOpenAIResponses,
+		ClientFormat:   translator.FormatClaude,
+		Model: volcModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"model": volcModel,
+		"input": "Say hello",
+	})
+	resp, err := execReq(e, info, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	mustUnmarshal(t, resp, &m)
+	if _, ok := m["content"]; !ok {
+		t.Fatalf("no content (expected Claude format): %s", string(resp))
+	}
+	t.Logf("Conv Responses->Claude: success")
+}
+
+func TestVolcConvResponsesToGemini(t *testing.T) {
+	t.Skip("translator openAIToGeminiResponse passthrough — not implemented")
+	key := volcKey(t)
+	e := executor.GetByProvider("volcengine")
+	info := &executor.RequestInfo{
+		UpstreamFormat: translator.FormatOpenAI,
+		InboundFormat:  translator.FormatOpenAIResponses,
+		ClientFormat:   translator.FormatGemini,
+		Model: volcModel,
+		ApiKey: key,
+		BaseURL: volcBase,
+	}
+	b, _ := json.Marshal(map[string]any{
+		"model": volcModel,
+		"input": "Say hello",
+	})
+	resp, err := execReq(e, info, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	mustUnmarshal(t, resp, &m)
+	if _, ok := m["candidates"]; !ok {
+		t.Fatalf("no candidates (expected Gemini format): %s", string(resp))
+	}
+	t.Logf("Conv Responses->Gemini: success")
+}
+
+// ========================================================================
 // Plan auto-resolve via ExecuteStream
 // ========================================================================
 
