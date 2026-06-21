@@ -7,7 +7,11 @@ Go module bridging AI API protocol formats (OpenAI Chat, Claude Messages, OpenAI
 ```
 model/       → Provider types, channel config, protocol metadata
 translator/  → Format conversion engine + protocol type definitions
-executor/    → Provider-specific executors with plugin registry
+executor/    → Modality-specific executors with plugin registry
+executor/text/    → Chat/completion executors (OpenAI, Claude, Gemini, etc.)
+executor/image/   → Image generation executors (GPT Image, Midjourney, etc.)
+executor/audio/   → Audio/Speech executors (TTS, STT, Music)
+executor/video/   → Video generation executors (Sora, Kling, etc.)
 ```
 
 ### model — Type definitions
@@ -52,25 +56,30 @@ All protocol type definitions live in `translator/`:
 - `responses.go` — `ResponsesRequest`, `InputItem`, `ResponsesOutput`, `ResponsesResponse`
 - `gemini.go` — `GeminiChatRequest`, `GeminiContent`, `GeminiPart`, `GeminiChatResponse`, `GeminiThinkingConfig`
 
-### executor — Provider execution
+### executor — Modality-Specific Provider Execution
 
-Each provider implements `Executor` interface and self-registers via `init()`:
+Each modality has its own plugin registry and interface under `executor/<modality>/`:
+
+| Modality | Interface | Registry | Standard Format |
+|---|---|---|---|
+| **Text** | `executor/text.Executor` | `Register(provider, exec)` | OpenAI Chat, Claude, Responses |
+| **Image** | `executor/image.ImageExecutor` | `RegisterImage(provider, exec)` | OpenAI `/v1/images/generations` |
+| **Audio** | `executor/audio.AudioExecutor` | `RegisterAudio(provider, exec)` | OpenAI `/v1/audio/speech` + `/v1/audio/transcriptions` |
+| **Video** | `executor/video.VideoExecutor` | `RegisterVideo(provider, exec)` | Custom (no universal standard yet) |
+
+**Text Executor** — same interface as before, now at `executor/text`:
 
 ```go
-func init() { Register("claude", &ClaudeExecutor{}) }
+import "github.com/just4zeroq/Omni-link/executor/text"
+func init() { text.Register("claude", &ClaudeExecutor{}) }
 ```
 
-**Executor interface:**
-- `Init(channel)` — configure from `*model.Channel`
-- `NativeEndpoints()` — upstream formats + URL paths this executor supports
-- `GetRequestURL(info)` — build upstream URL
-- `SetupRequestHeader(header, info)` — auth, content-type, streaming headers
-- `ConvertRequest/ConvertResponse(body, from, to)` — format conversion (all delegate to `translator.Convert`)
-- `RequestCustomize/ResponseCustomize(body, info)` — vendor-specific injection
-- `NewResponseStream(from, to)` — SSE streaming converter
-- `DoRequest(info, body)` — raw HTTP call
+**Image/Audio/Video executors** follow same pattern with modality-specific methods:
+- `ImageExecutor` — `TextToImage`, `ImageToImage`, `GetTask`
+- `AudioExecutor` — `TextToSpeech`, `SpeechToText`, `MusicGenerate`, `GetTask`, `ListVoices`
+- `VideoExecutor` — `TextToVideo`, `ImageToVideo`, `VideoToVideo`, `ExtendVideo`, `EditVideo`, `GetTask`
 
-**Implemented executors:**
+**Implemented text executors:**
 - `claude` — native Claude, SSE streaming Claude↔OpenAI
 - `openai` — native OpenAI Chat, includes Responses↔OpenAI
 - `gemini` — native Gemini, converts via OpenAI intermediate on request/response
@@ -107,6 +116,10 @@ Both buffer incomplete events, handle tool calls, track usage accumulation.
 
 **Import paths:**
 `github.com/just4zeroq/Omni-link/translator`
+`github.com/just4zeroq/Omni-link/executor/text` — text executor
+`github.com/just4zeroq/Omni-link/executor/image` — image executor
+`github.com/just4zeroq/Omni-link/executor/audio` — audio executor
+`github.com/just4zeroq/Omni-link/executor/video` — video executor
 
 ## Testing
 
@@ -114,20 +127,20 @@ Both buffer incomplete events, handle tool calls, track usage accumulation.
 - 37 test cases covering format detection, all conversion pairs, round-trip
 - Run: `go test ./translator/`
 
-**Integration tests** (`executor/deepseek/` + `executor/volcengine/`):
+**Integration tests** (`executor/text/deepseek/` + `executor/text/volcengine/`):
 Requires valid API keys in `.env`. DeepSeek tests cover:
 - OpenAI-compatible endpoint (`/v1/chat/completions`)
 - Anthropic-compatible endpoint (`/anthropic/v1/messages`)
 - Format conversion (OpenAI↔Claude round-trip)
 - Full executor pipeline, streaming, tools, thinking, error handling
-- Run: `go test ./executor/deepseek/ -timeout 120s`
+- Run: `go test ./executor/text/deepseek/ -timeout 120s`
 
 Volcengine (Doubao/火山引擎) tests cover:
 - OpenAI Chat + Responses API endpoints
 - Streaming (both Chat + Responses SSE passthrough)
 - Format conversion (Responses↔Chat via Plan)
 - System message, tools, params, error handling
-- Run: `go test ./executor/volcengine/ -timeout 120s`
+- Run: `go test ./executor/text/volcengine/ -timeout 120s`
 
 **DeepSeek API**:
 - OpenAI format: `https://api.deepseek.com/v1/chat/completions` (auth: `Authorization: Bearer`)
@@ -137,6 +150,9 @@ Volcengine (Doubao/火山引擎) tests cover:
 
 ## Common operations
 
-- **Add new provider executor**: create `executor/<name>.go` with `init()` Registration, implement `Executor` interface, add vendor-specific hooks
+- **Add new text executor**: create `executor/text/<name>.go` with `init()` Registration, implement `Executor` interface, add vendor-specific hooks
+- **Add new image executor**: create `executor/image/<name>.go` with `init()` RegisterImage, implement `ImageExecutor` interface
+- **Add new audio executor**: create `executor/audio/<name>.go` with `init()` RegisterAudio, implement `AudioExecutor` interface
+- **Add new video executor**: create `executor/video/<name>.go` with `init()` RegisterVideo, implement `VideoExecutor` interface
 - **Add new format**: define types in new `translator/<name>.go`, add `Format` constant, implement `convertDirect` cases in `conv.go`
 - **Add new channel mapping**: add `ProviderType` constant in `model/model.go`, add `ResolveProtocol` case

@@ -4,15 +4,16 @@
 
 ```go
 import "github.com/just4zeroq/Omni-link/translator"
+import textexec "github.com/just4zeroq/Omni-link/executor/text"
 
 // Transparent format conversion: OpenAI ↔ Claude ↔ Responses ↔ Gemini
 result, _ := translator.Convert(openaiBody, translator.FormatOpenAI, translator.FormatClaude)
 
 // Full executor pipeline with auto-format planning
-resp, _ := executor.Request(claudeExecutor, info, body)
+resp, _ := textexec.Request(claudeExecutor, info, body)
 
 // Streaming with cross-format SSE conversion
-executor.ExecuteStream(ctx, executor, info, body, callback)
+textexec.ExecuteStream(ctx, executor, info, body, callback)
 ```
 
 [![Go Version](https://img.shields.io/badge/Go-1.23-00ADD8?style=flat-square&logo=go)](https://go.dev)
@@ -20,7 +21,7 @@ executor.ExecuteStream(ctx, executor, info, body, callback)
 [![License](https://img.shields.io/badge/License-MIT-000000?style=flat-square)](LICENSE)
 [![Zero Deps](https://img.shields.io/badge/Dependencies-Zero-6366f1?style=flat-square)](go.mod)
 
-> **Status**: Text protocol translation ✅ | Speech/Image/Video framework in design
+> **Status**: Text protocol translation ✅ | Image/Audio/Video framework ✅ | Provider implementations 🚧
 
 ---
 
@@ -29,9 +30,9 @@ executor.ExecuteStream(ctx, executor, info, body, callback)
 | Category | Status | Provider Types |
 |---|---|---|
 | **🔤 Text** | ✅ Complete | OpenAI, Claude, Gemini, DeepSeek, Volcengine + 35+ more |
-| **🖼️ Image** | 🚧 Planned | Midjourney, Jimeng, DALL-E, Stable Diffusion |
-| **🎵 Audio** | 🚧 Planned | Suno, ElevenLabs, OpenAI TTS/STT |
-| **🎬 Video** | 🚧 Planned | Sora, Kling, Runway |
+| **🖼️ Image** | 🚧 Providers WIP | GPT Image 2, Midjourney, Seedream, Qwen, Nano Banana, Z Image, Wan2.5 |
+| **🎵 Audio** | 🚧 Providers WIP | OpenAI TTS/STT, ElevenLabs, Azure, PlayHT, Cartesia, Fish Audio, CosyVoice, FunASR, Suno |
+| **🎬 Video** | 🚧 Providers WIP | Sora, Kling, Runway, Seedance, Hailuo, Pika, Wan, Luma, Grok, OmniHuman, HappyHorse |
 
 ---
 
@@ -46,7 +47,7 @@ package main
 
 import (
     "github.com/just4zeroq/Omni-link/translator"
-    "github.com/just4zeroq/Omni-link/executor"
+    textexec "github.com/just4zeroq/Omni-link/executor/text"
 )
 
 func main() {
@@ -57,16 +58,16 @@ func main() {
     // openaiReq → {"model":"...","messages":[...],"max_tokens":1024}
 
     // 2. Use an executor
-    e := &executor.ClaudeExecutor{}
+    e := &textexec.ClaudeExecutor{}
     e.Init(channel)
 
-    info := &executor.RequestInfo{
+    info := &textexec.RequestInfo{
         InboundFormat:  translator.FormatOpenAI,
         ClientFormat:   translator.FormatOpenAI,
         UpstreamFormat: translator.FormatClaude, // auto-resolve via Plan()
         IsStream:       true,
     }
-    executor.ExecuteStream(ctx, e, info, body, callback)
+    textexec.ExecuteStream(ctx, e, info, body, callback)
 }
 ```
 
@@ -113,11 +114,12 @@ Unsupported pairs auto-fallback via OpenAI intermediate hub.
                              │
 ┌────────────────────────────▼─────────────────────────────────────┐
 │                         executor/                                 │
-│  Executor interface + plugin registry + Plan()                   │
+│  Text executors (executor/text/)                              │
 │  ┌────────┬────────┬────────┬──────────┬────────────┐            │
 │  │ Claude │ OpenAI │ Gemini │ DeepSeek │ Volcengine │            │
 │  │ Cl     │ OAI    │ GEM    │ OAI+Cl   │ OAI+RSP    │            │
 │  └────────┴────────┴────────┴──────────┴────────────┘            │
+│  Image/Audio/Video executors: executor/{image,audio,video}/     │
 │  Plan() → optimal upstream format (score-based)                  │
 │  SSE stream converters: Claude↔OpenAI (bidirectional)            │
 └──────────────────────────────────────────────────────────────────┘
@@ -136,11 +138,14 @@ Unsupported pairs auto-fallback via OpenAI intermediate hub.
 - 4 type definition files + 12 converter functions
 - Extensible: add a file + `convertDirect` case
 
-**executor/** — Provider execution
-- `Executor` interface: Init, NativeEndpoints, Convert, Customize, Stream, DoRequest
-- `Register("name", &Executor{})` — plugin registry via init()
-- `Plan(in, out, endpoints)` — upstream format selection (score: input+output mismatch)
-- `RequestInfo.UpstreamFormat` — zero-value triggers Plan; 4-level override
+**executor/** — Modality-specific provider execution
+- Text: `executor/text` — `Executor` interface: Init, NativeEndpoints, Convert, Customize, Stream, DoRequest
+  - `Register("name", &Executor{})` — plugin registry via init()
+  - `Plan(in, out, endpoints)` — upstream format selection (score: input+output mismatch)
+  - `RequestInfo.UpstreamFormat` — zero-value triggers Plan; 4-level override
+- Image: `executor/image` — `ImageExecutor` interface for image generation
+- Audio: `executor/audio` — `AudioExecutor` interface for TTS/STT/music
+- Video: `executor/video` — `VideoExecutor` interface for video generation
 
 ---
 
@@ -176,16 +181,16 @@ Unsupported pairs auto-fallback via OpenAI intermediate hub.
 Package                    Tests     Notes
 ─────────────────────────────────────────────────
 translator/                  37      No API keys needed
-executor/deepseek/           27      Needs DEEPSEEK_API_KEY
-executor/volcengine/         32      Needs VOLC_API_KEY
+executor/text/deepseek/      27      Needs DEEPSEEK_API_KEY
+executor/text/volcengine/    32      Needs VOLC_API_KEY
 ─────────────────────────────────────────────────
 Total                        96      go test ./... -count=1 -timeout 300s
 ```
 
 ```bash
 go test ./translator/                             # 37 unit tests
-go test ./executor/deepseek/ -timeout 120s         # 27 integration
-go test ./executor/volcengine/ -timeout 180s       # 32 integration
+go test ./executor/text/deepseek/ -timeout 120s    # 27 integration
+go test ./executor/text/volcengine/ -timeout 180s  # 32 integration
 ```
 
 Integration tests require `.env`:
@@ -230,38 +235,21 @@ Omni-link/
 
 ## Adding a New Provider
 
+### Text Chat Provider
 1. **Define `ProviderType`** in `model/model.go`
 2. **Add format types** (if new protocol) in `translator/`
-3. **Implement `Executor`** in `executor/<name>.go` with `init()` registration
+3. **Implement `text.Executor`** in `executor/text/<name>.go` with `init()` registration
 4. **Define `NativeEndpoints()`** — supported formats + URL paths
 5. **Add vendor logic** in `RequestCustomize`/`ResponseCustomize`
-6. **Write tests** — unit + integration in `executor/<name>/<name>_test.go`
+6. **Write tests** — unit + integration in `executor/text/<name>/<name>_test.go`
+
+### Image / Audio / Video Provider
+1. **Choose modality**: `executor/image/`, `executor/audio/`, or `executor/video/`
+2. **Implement executor interface** (e.g. `ImageExecutor`, `AudioExecutor`, `VideoExecutor`)
+3. **Register** via `RegisterImage()`, `RegisterAudio()`, `RegisterVideo()` in `init()`
+4. **Write tests** in modality-specific directory
 
 ---
-
-## Future Modalities
-
-Each modality follows the same three-layer pattern with modality-specific types:
-
-```
-model/          → Modality tags on ProviderType
-translator/     → modality/ sub-packages (text/, speech/, image/, video/)
-executor/       → Modality-aware executors per provider
-```
-
-### Speech (TTS / STT)
-- Input: text + voice params → Output: audio stream
-- Providers: OpenAI TTS, Azure Speech, ElevenLabs, Suno
-- Translation: SSML ↔ plain text, voice profile mapping
-
-### Image Generation
-- Input: prompt + params → Output: image URL / base64
-- Providers: Midjourney, Jimeng, DALL-E, Stable Diffusion
-- Translation: Prompt normalization, parameter mapping
-
-### Video Generation
-- Input: prompt + params → Output: video URL / stream
-- Providers: Sora, Kling, Runway, Seedance
 
 ---
 

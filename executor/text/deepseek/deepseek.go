@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/just4zeroq/Omni-link/executor"
+	"github.com/just4zeroq/Omni-link/executor/text"
 	"github.com/just4zeroq/Omni-link/translator"
 )
 
