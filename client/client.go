@@ -1,12 +1,5 @@
 // Package client provides a unified Go-idiomatic entry point for all Omni-link API calls.
 //
-// One Client per channel (provider + API key). Methods auto-resolve the correct executor,
-// handle format conversion, and return structured results.
-//
-// Usage:
-//
-//	client := omni.NewClient(channel)
-//
 //	// Text chat (sync)
 //	resp, err := client.Chat(ctx, []byte(`{"model":"gpt-4","messages":[{"role":"user","content":"Hi"}]}`))
 //
@@ -26,6 +19,21 @@
 //	task, err := client.Video(ctx, &video.TextToVideoRequest{Prompt: "rocket launch"})
 //	// Poll:
 //	task, err = client.PollVideo(ctx, task.ID)
+//
+// # Executor Registration
+//
+// Executors register themselves via init(). Import the subpackages you need:
+//
+//	import (
+//		_ "github.com/just4zeroq/Omni-link/executor/text/openai"
+//		_ "github.com/just4zeroq/Omni-link/executor/text/anthropic"
+//		_ "github.com/just4zeroq/Omni-link/executor/image/openai"
+//	)
+//
+// Only imported executors are compiled into the binary — true on-demand loading.
+// For all executors, import:
+//
+//	import _ "github.com/just4zeroq/Omni-link/executor/all"
 package client
 
 import (
@@ -40,6 +48,8 @@ import (
 	textexec "github.com/just4zeroq/Omni-link/executor/text"
 	"github.com/just4zeroq/Omni-link/executor/video"
 	videoexec "github.com/just4zeroq/Omni-link/executor/video"
+	"github.com/just4zeroq/Omni-link/executor/embedding"
+	embeddingexec "github.com/just4zeroq/Omni-link/executor/embedding"
 	"github.com/just4zeroq/Omni-link/model"
 	"github.com/just4zeroq/Omni-link/translator"
 )
@@ -51,33 +61,56 @@ var ErrUnsupported = fmt.Errorf("operation not supported by this provider")
 // Zero-value = "" means text not supported.
 var textExecutorName = map[model.ProviderType]string{
 	model.ProviderOpenAI:     "openai",
-	model.ProviderClaude:     "claude",
+	model.ProviderAnthropic:  "anthropic",
 	model.ProviderDeepSeek:   "deepseek",
-	model.ProviderGemini:     "gemini",
+	model.ProviderGoogle:     "google",
 	model.ProviderVolcengine: "volcengine",
+	model.ProviderZhipu:      "zhipu",
+	model.ProviderMoonshot:   "moonshot",
+	model.ProviderMiniMax:    "minimax",
+	model.ProviderXiaomi:     "xiaomi",
+	model.ProviderKunlun:     "kunlun",
+	model.ProviderStepfun:    "stepfun",
 }
 
 // imageExecutorName maps ProviderType → image executor registry name.
 var imageExecutorName = map[model.ProviderType]string{
-	model.ProviderOpenAI:     "gptimage",
+	model.ProviderOpenAI:     "openai",
 	model.ProviderMidjourney: "midjourney",
 	model.ProviderSeedream:   "seedream",
+	model.ProviderAli:        "alibaba",
+	model.ProviderZhipu:      "zhipu",
+	model.ProviderStepfun:    "stepfun",
+	model.ProviderFal:        "fal",
 }
 
 // audioExecutorName maps ProviderType → audio executor registry name.
 var audioExecutorName = map[model.ProviderType]string{
 	model.ProviderOpenAI: "openai",
 	model.ProviderAzure:  "azure",
+	model.ProviderAli:    "alibaba",
+	model.ProviderStepfun: "stepfun",
 }
 
 // videoExecutorName maps ProviderType → video executor registry name.
 var videoExecutorName = map[model.ProviderType]string{
-	model.ProviderSora:  "sora",
-	model.ProviderKling: "kling",
+	model.ProviderOpenAI: "openai",
+	model.ProviderAli:    "alibaba",
+	model.ProviderKling:  "kuaishou",
+	model.ProviderXAI:    "xai",
+	model.ProviderStepfun: "stepfun",
+}
+
+// embeddingExecutorName maps ProviderType → embedding executor registry name.
+var embeddingExecutorName = map[model.ProviderType]string{
+	model.ProviderOpenAI: "openai",
+	model.ProviderZhipu:  "zhipu",
+	model.ProviderAli:    "alibaba",
+	model.ProviderJina:   "jina",
 }
 
 // Client is the unified entry point for all Omni-link API calls.
-// Create via NewClient, then call Chat/Image/Speak/Transcribe/Video.
+// Create via NewClient, then call Chat/Image/Speak/Transcribe/Video/Embed.
 type Client struct {
 	channel *model.Channel
 
@@ -87,6 +120,7 @@ type Client struct {
 	iExec  imageexec.ImageExecutor
 	aExec  audioexec.AudioExecutor
 	vExec  videoexec.VideoExecutor
+	eExec  embeddingexec.EmbeddingExecutor
 }
 
 // NewClient creates a client from a channel configuration.
@@ -270,6 +304,23 @@ func (c *Client) PollVideo(ctx context.Context, taskID string) (*video.VideoTask
 	return exec.GetTask(taskID)
 }
 
+// --- Embedding ---
+
+// Embed creates text embeddings using the provider's embedding model.
+//
+// req.Model — embedding model name
+// req.Input — string or []string
+// req.Dimensions — optional dimension truncation
+//
+// Returns embedding vectors with token usage.
+func (c *Client) Embed(ctx context.Context, req *embedding.EmbeddingRequest) (*embedding.EmbeddingResponse, error) {
+	exec, err := c.embeddingExecutor()
+	if err != nil {
+		return nil, err
+	}
+	return exec.Embed(req)
+}
+
 // --- Internal executor resolution ---
 
 func (c *Client) textExecutor() (textexec.Executor, error) {
@@ -361,6 +412,25 @@ func (c *Client) videoExecutor() (videoexec.VideoExecutor, error) {
 	}
 	e.Init(c.channel)
 	c.vExec = e
+	return e, nil
+}
+
+func (c *Client) embeddingExecutor() (embeddingexec.EmbeddingExecutor, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.eExec != nil {
+		return c.eExec, nil
+	}
+	name := embeddingExecutorName[c.channel.ProviderType]
+	if name == "" {
+		return nil, fmt.Errorf("%w: text embedding (no embedding executor for provider %d)", ErrUnsupported, c.channel.ProviderType)
+	}
+	e := embeddingexec.GetEmbedding(name)
+	if e == nil {
+		return nil, fmt.Errorf("embedding executor %q not registered (forgot to import?)", name)
+	}
+	e.Init(c.channel)
+	c.eExec = e
 	return e, nil
 }
 

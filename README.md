@@ -1,43 +1,44 @@
 # Omni-link
 
-**Universal AI Protocol Translation Library** — Go library bridging AI API formats across text, image, audio, and video.
+**Universal AI Protocol Translation Library** — Go library bridging AI API formats across text, image, audio, video, and embedding.
 
 ```go
 import "github.com/just4zeroq/Omni-link/client"
 import "github.com/just4zeroq/Omni-link/model"
 
-// Unified client — one object for text/image/audio/video
+// Unified client — one object for all modalities
 c := client.NewClient(&model.Channel{
     ProviderType: model.ProviderOpenAI,
     ApiKey:       "sk-...",
 })
 
-// Text chat — OpenAI format body, auto-converts to upstream protocol
+// Text chat — OpenAI format body, auto-converts
 resp, _ := c.Chat(ctx, []byte(`{"model":"gpt-4","messages":[{"role":"user","content":"Hi"}]}`))
 
-// Image, TTS, STT, Video — all via the same client
+// Image, TTS, STT, Video, Embedding — all via the same client
 images, _ := c.Image(ctx, &image.TextToImageRequest{Prompt: "a cat"})
 stream, _ := c.Speak(ctx, &audio.TTSRequest{Input: "Hello"})
 task, _ := c.Video(ctx, &video.TextToVideoRequest{Prompt: "rocket launch"})
+emb, _ := c.Embed(ctx, &embedding.EmbeddingRequest{Model: "text-embedding-v3", Input: "Hello"})
 ```
 
 [![Go Version](https://img.shields.io/badge/Go-1.23-00ADD8?style=flat-square&logo=go)](https://go.dev)
-[![Tests](https://img.shields.io/badge/Tests-106_passing-22c55e?style=flat-square)](https://github.com/just4zeroq/Omni-link)
 [![License](https://img.shields.io/badge/License-MIT-000000?style=flat-square)](LICENSE)
 [![Zero Deps](https://img.shields.io/badge/Dependencies-Zero-6366f1?style=flat-square)](go.mod)
 
-> **Status**: Text protocol translation ✅ | Image providers ✅ | Audio providers ✅ | Video providers ✅
+> **Status**: Text protocol translation ✅ | Image providers ✅ | Audio providers ✅ | Video providers ✅ | Embedding ✅
 
 ---
 
 ## Modality Roadmap
 
-| Category | Status | Provider Types |
+| Category | Status | Providers |
 |---|---|---|
-| **🔤 Text** | ✅ Complete | OpenAI, Claude, Gemini, DeepSeek, Volcengine + 35+ more |
-| **🖼️ Image** | ✅ Complete | GPT Image 2, Midjourney, Seedream, Qwen, Nano Banana, Z Image, Wan2.5 |
-| **🎵 Audio** | ✅ Complete | OpenAI TTS/STT, ElevenLabs, Azure, PlayHT, Cartesia, Fish Audio, CosyVoice, FunASR, Suno |
-| **🎬 Video** | ✅ Complete | Sora, Kling, Runway, Seedance, Hailuo, Pika, Wan, Luma, Grok, OmniHuman, HappyHorse |
+| **🔤 Text** | ✅ Complete | OpenAI, Anthropic, Google, DeepSeek, Volcengine, Zhipu, Moonshot, MiniMax, Xiaomi, Kunlun, Stepfun + 35+ more via protocol translation |
+| **🖼️ Image** | ✅ Complete | OpenAI, Midjourney, Alibaba (Qwen/Wan), Zhipu, Stepfun, NanoBanana, ZImage, Volcengine (Seedream), Fal (Seedream) |
+| **🎵 Audio** | ✅ Complete | OpenAI, Azure, Alibaba (CosyVoice/FunASR), ElevenLabs, PlayHT, Cartesia, FishAudio, Stepfun, Suno |
+| **🎬 Video** | ✅ Complete | OpenAI (Sora), Alibaba (Wan/HappyHorse), Kuaishou, Runway, Seedance, Hailuo, Pika, Luma, xAI, OmniHuman, Stepfun |
+| **📊 Embedding** | ✅ Complete | OpenAI, Zhipu, Alibaba, Jina |
 
 ---
 
@@ -47,12 +48,17 @@ task, _ := c.Video(ctx, &video.TextToVideoRequest{Prompt: "rocket launch"})
 go get github.com/just4zeroq/Omni-link
 ```
 
+Executor registration follows `database/sql` pattern — blank-import only what you need:
+
 ```go
 package main
 
 import (
     "github.com/just4zeroq/Omni-link/client"
     "github.com/just4zeroq/Omni-link/model"
+    _ "github.com/just4zeroq/Omni-link/executor/text/openai"   // only these compiled
+    _ "github.com/just4zeroq/Omni-link/executor/image/openai"
+    _ "github.com/just4zeroq/Omni-link/executor/embedding/openai"
 )
 
 func main() {
@@ -82,39 +88,13 @@ func main() {
     // Video (async, poll)
     task, _ := c.Video(ctx, &video.TextToVideoRequest{Prompt: "rocket launch"})
     task, _ = c.PollVideo(ctx, task.ID)
+
+    // Text embedding
+    emb, _ := c.Embed(ctx, &embedding.EmbeddingRequest{
+        Model: "text-embedding-3-small",
+        Input: "Hello world",
+    })
 }
-```
-
-### Image / Audio / Video Quick Start
-
-```go
-import (
-    imageexec "github.com/just4zeroq/Omni-link/executor/image"
-    audioexec "github.com/just4zeroq/Omni-link/executor/audio"
-    videoexec "github.com/just4zeroq/Omni-link/executor/video"
-)
-
-// Image generation (7 providers)
-imgExec, _ := imageexec.GetImage("gptimage")
-result, _ := imgExec.TextToImage(&imageexec.TextToImageRequest{
-    Prompt: "A cat wearing a hat", Model: "dall-e-3",
-    N: 1, Size: "1024x1024",
-})
-
-// TTS with unified streaming (9 audio providers)
-audioExec, _ := audioexec.GetAudio("cartesia")
-stream, _ := audioExec.TextToSpeech(&audioexec.TTSRequest{
-    Input: "Hello world",
-    Voice: "a0e41e7a-6b41-4b50-9b09-64b0e0d717f5",
-})
-result, _ := stream.Collect() // or range stream.Chunk for streaming
-
-// Video generation (11 providers, all async)
-videoExec, _ := videoexec.GetVideo("kling")
-task, _ := videoExec.TextToVideo(&videoexec.TextToVideoRequest{
-    Prompt: "A rocket launching",
-})
-// Poll: videoExec.GetTask(task.ID)
 ```
 
 ---
@@ -138,77 +118,57 @@ task, _ := videoExec.TextToVideo(&videoexec.TextToVideoRequest{
 | `c.Video(ctx, req)` | Text-to-video (async) |
 | `c.VideoFromImage(ctx, req)` | Image-to-video |
 | `c.PollVideo(ctx, id)` | Poll video task |
+| `c.Embed(ctx, req)` | Text embeddings |
 
 See [client/client.go](client/client.go) for full API.
-
----
-
-## Text Protocol Translation
-
-### Client-Exposed Formats
-
-| Format | Endpoint | Schema |
-|---|---|---|
-| `OpenAI` | `/v1/chat/completions` | `messages` + tools → `choices` |
-| `Claude` | `/v1/messages` | `messages` + `max_tokens` → `type: "message"` |
-| `OpenAI Responses` | `/v1/responses` | `input` → `output` |
-
-### Conversion Matrix — All 12 Pairs Covered
-
-| from ↓ → to | openai | claude | responses | gemini |
-|---|---|---|---|---|
-| **openai** | — | ✓ | ✓ | ✓ |
-| **claude** | ✓ | — | ✓ | ✓ |
-| **responses** | ✓ | ✓ | — | ✓ |
-| **gemini** ¹ | ✓ | ✓ | ✓ | — |
-
-¹ Gemini format = internal only (Gemini executor). No direct client exposure.  
-Unsupported pairs auto-fallback via OpenAI intermediate hub.
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                            model/                                 │
-│  ProviderType (40+), Channel config, Protocol resolution         │
-└────────────────────────────┬─────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                         model/                                │
+│  ProviderType (46+), Channel config, Protocol resolution     │
+└────────────────────────────┬─────────────────────────────────┘
                              │
-┌────────────────────────────▼─────────────────────────────────────┐
-│                         translator/                               │
-│  Convert(body, from, to) — format detection + conversion engine  │
-│  Type definitions: openai.go, claude.go, responses.go, gemini.go │
-│  12 directional converters in conv.go                             │
-└────────────────────────────┬─────────────────────────────────────┘
+┌────────────────────────────▼─────────────────────────────────┐
+│                       translator/                              │
+│  Convert(body, from, to) — format detection + conversion     │
+│  Type defs: openai.go, claude.go, responses.go, gemini.go    │
+│  12 directional converters in conv.go                         │
+└────────────────────────────┬─────────────────────────────────┘
                              │
-┌────────────────────────────▼─────────────────────────────────────┐
-│                         executor/                                 │
-│  ┌─────────────── text/ ─────────────────────────────────────┐    │
-│  │ Claude │ OpenAI │ Gemini │ DeepSeek │ Volcengine          │    │
-│  │ Cl     │ OAI    │ GEM    │ OAI+Cl   │ OAI+RSP            │    │
-│  └───────────────────────────────────────────────────────────┘    │
-│  ┌─────────────── image/ ──────────────────────────────────────┐  │
-│  │ GPT Image │ Qwen │ NanoBanana │ ZImage │ Wan │ Seedream    │  │
-│  │ Midjourney                                                  │  │
-│  └───────────────────────────────────────────────────────────┘  │
-│  ┌─────────────── audio/ ─────────────────────────────────────┐  │
-│  │ OpenAI │ ElevenLabs │ CosyVoice │ Suno │ FunASR │ Azure   │  │
-│  │ PlayHT │ Cartesia │ FishAudio                              │  │
-│  └───────────────────────────────────────────────────────────┘  │
-│  ┌─────────────── video/ ─────────────────────────────────────┐  │
-│  │ Sora │ Kling │ Wan │ Grok │ Runway │ Seedance │ Hailuo    │  │
-│  │ Pika │ Luma │ OmniHuman │ HappyHorse                       │  │
-│  └───────────────────────────────────────────────────────────┘  │
-│  Plan() → optimal upstream format (score-based)                  │
-│  SSE stream converters: Claude↔OpenAI (bidirectional)            │
-└──────────────────────────────────────────────────────────────────┘
+┌────────────────────────────▼─────────────────────────────────┐
+│                        executor/                               │
+│  ┌───────────── text/ ─────────────────────────────────────┐  │
+│  │ OpenAI · Anthropic · Google · DeepSeek · Volcengine     │  │
+│  │ Zhipu · Moonshot · MiniMax · Xiaomi · Kunlun · Stepfun  │  │
+│  └─────────────────────────────────────────────────────────┘  │
+│  ┌───────────── image/ ────────────────────────────────────┐  │
+│  │ OpenAI · Alibaba · Zhipu · Stepfun                      │  │
+│  │ Midjourney · NanoBanana · ZImage · Volcengine · Fal     │  │
+│  └─────────────────────────────────────────────────────────┘  │
+│  ┌───────────── audio/ ────────────────────────────────────┐  │
+│  │ OpenAI · Azure · Alibaba · ElevenLabs · PlayHT          │  │
+│  │ Cartesia · FishAudio · Stepfun · Suno                   │  │
+│  └─────────────────────────────────────────────────────────┘  │
+│  ┌───────────── video/ ────────────────────────────────────┐  │
+│  │ OpenAI · Alibaba · Kuaishou · Runway · Seedance         │  │
+│  │ Hailuo · Pika · Luma · xAI · OmniHuman · Stepfun       │  │
+│  └─────────────────────────────────────────────────────────┘  │
+│  ┌───────────── embedding/ ───────────────────────────────┐   │
+│  │ OpenAI · Zhipu · Alibaba · Jina                        │   │
+│  └────────────────────────────────────────────────────────┘   │
+│  Plan() → optimal upstream format (score-based)              │
+│  SSE stream converters: Claude↔OpenAI (bidirectional)        │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ### Three-Layer Design
 
 **model/** — Provider types, channel config
-- 40+ `ProviderType` (OpenAI=1 ... Midjourney=40)
+- 46+ `ProviderType` (OpenAI=1 … Jina=46)
 - `Channel` struct with protocol list + API key
 - `ResolveProtocol()` maps provider → default protocol
 
@@ -222,39 +182,29 @@ Unsupported pairs auto-fallback via OpenAI intermediate hub.
 - Text: `executor/text` — `Executor` interface: Init, NativeEndpoints, Convert, Customize, Stream, DoRequest
   - `Register("name", &Executor{})` — plugin registry via init()
   - `Plan(in, out, endpoints)` — upstream format selection (score: input+output mismatch)
-  - `RequestInfo.UpstreamFormat` — zero-value triggers Plan; 4-level override
+  - Request-level format override via `UpstreamFormat`
 - Image: `executor/image` — `ImageExecutor` interface (TextToImage, ImageToImage, GetTask)
-  - Sync: GPT Image, Seedream; async polling: Midjourney, Qwen, Wan
 - Audio: `executor/audio` — `AudioExecutor` interface (TextToSpeech/*AudioStream*, SpeechToText, MusicGenerate, GetTask, ListVoices)
-  - TTS returns `*AudioStream` — one chunk sync vs multi-chunk streaming
-- Video: `executor/video` — `VideoExecutor` interface (TextToVideo...+GetTask)
-  - All video is async polling
+- Video: `executor/video` — `VideoExecutor` interface (TextToVideo…+GetTask)
+- Embedding: `executor/embedding` — `EmbeddingExecutor` interface (Embed)
 
 ---
 
 ## Provider Implementations — Text
 
-| Executor | Native Formats | Streaming | Tests |
+| Executor | Native Formats | Thinking/Reasoning | Notes |
 |---|---|---|---|
-| **Claude** | `claude` (`/v1/messages`) | ✅ Claude↔OpenAI | translator-level |
-| **OpenAI** | `openai` (`/v1/chat/completions`) | ✅ Native | translator-level |
-| **Gemini** | `gemini` (Google endpoint) | ⚠️ Via OpenAI hub | translator-level |
-| **DeepSeek** | `openai` + `claude` dual | ✅ Bidirectional | **27 tests** |
-| **Volcengine** | `openai` + `openai_responses` dual | ✅ Native SSE | **32 tests** |
-
-### DeepSeek
-- Dual endpoints: OpenAI `/v1/chat/completions` + Claude `/anthropic/v1/messages`
-- Auth: Bearer (OpenAI) / `x-api-key` (Claude)
-- Thinking/reasoning injection with effort mapping (minimal→max)
-- 27 tests: Chat, streaming, conversion, Plan, tools, thinking, errors
-
-### Volcengine / Doubao (火山引擎)
-- OpenAI Chat + Responses endpoints
-- Auth: `Authorization: Bearer` + model-in-body
-- Multi-model: doubao-seed-2-0-lite, GLM-4-7B, DeepSeek V3
-- Bot model routing (`bot-` prefix → `/api/v3/bots/chat/completions`)
-- `stream_options: {"include_usage": true}` injection
-- 32 tests: 3-model Chat, Responses, streaming, 10-way conversion, Plan, tools, params
+| **OpenAI** | `openai` (`/v1/chat/completions`) | `reasoning_effort` | Standard ref |
+| **Anthropic** | `claude` (`/v1/messages`) | `thinking.type` | Claude native |
+| **Google** | `gemini` (Google endpoint) | — | Via OpenAI hub fallback |
+| **DeepSeek** | `openai` + `claude` dual | Effort mapping min→max | 27 tests |
+| **Volcengine** | `openai` + `openai_responses` dual | — | 32 tests, bot routing |
+| **Zhipu (GLM)** | `openai` (`/v1/chat/completions`) | `thinking.type` + `reasoning_effort` | Base: open.bigmodel.cn |
+| **Moonshot (Kimi)** | `openai` (`/v1/chat/completions`) | `reasoning_effort` | Base: api.moonshot.cn |
+| **MiniMax** | `openai` (`/v1/chat/completions`) | `thinking.type: adaptive` + `reasoning_split` | Base: api.minimaxi.com |
+| **Xiaomi (MiMo)** | `openai` (`/v1/chat/completions`) | `enable_thinking` | Base: api.xiaomimimo.com |
+| **Kunlun (SkyClaw)** | `openai` (`/v1/chat/completions`) | — | Base: api.apifree.ai |
+| **Stepfun** | `openai` (`/v1/chat/completions`) | `reasoning_effort` | Base: api.stepfun.com |
 
 ---
 
@@ -262,15 +212,15 @@ Unsupported pairs auto-fallback via OpenAI intermediate hub.
 
 | Executor | T2I | I2I | Pattern | Auth | Notes |
 |----------|-----|-----|---------|------|-------|
-| **GPT Image** | ✅ | ✅(edits) | Sync | Bearer | OpenAI DALL-E / GPT Image 2 |
-| **Qwen Image** | ✅ | ✅ | Async | Bearer | DashScope qwen-max/plus/turbo |
+| **OpenAI** | ✅ | ✅ (edits) | Sync | Bearer | DALL-E / GPT Image 2 |
+| **Alibaba** | ✅ | ✅ | Async | Bearer | DashScope: Qwen + Wan models |
+| **Zhipu** | ✅ | ✅ | Sync | Bearer | CogView models |
+| **Stepfun** | ✅ | ✅ | Sync | Bearer | step-image-edit-2 |
+| **Midjourney** | ✅ | ✅ | Async | Bearer | /v1/imagine → poll |
 | **NanoBanana** | ✅ | ❌ | Sync | Bearer | OpenAI-compatible |
-| **Z Image** | ✅ | ❌ | Sync | Bearer | OpenAI-compatible |
-| **Wan** | ✅ | ✅ | Async | Bearer | DashScope wan2.5-t2i/i2i |
-| **Seedream** | ✅ | ✅ | Sync | Bearer | Volcengine Ark + fal.ai dual backend |
-| **Midjourney** | ✅ | ✅ | Async | Bearer | /v1/imagine → poll, I2I via img URL in prompt |
-
-> **Models, endpoints, auth, and Extra params per provider:** [docs/provider-reference.md](docs/provider-reference.md)
+| **ZImage** | ✅ | ❌ | Sync | Bearer | OpenAI-compatible |
+| **Volcengine** (Seedream) | ✅ | ✅ | Sync | Bearer | ark.cn-beijing.volces.com |
+| **Fal** (Seedream) | ✅ | ✅ | Sync | Key | fal.ai |
 
 ---
 
@@ -279,16 +229,15 @@ Unsupported pairs auto-fallback via OpenAI intermediate hub.
 | Executor | TTS | STT | Music | Pattern | Notes |
 |----------|-----|-----|-------|---------|-------|
 | **OpenAI** | ✅ | ✅ | ❌ | Sync | /v1/audio/speech + transcriptions |
+| **Azure** | ✅ | ✅ | ❌ | Sync/SSML | Region-based URL |
+| **Alibaba** (CosyVoice) | ✅ | ❌ | ❌ | Sync/URL | DashScope SpeechSynthesizer |
+| **Alibaba** (FunASR) | ❌ | ✅ | ❌ | Sync+Async | DashScope + self-hosted |
 | **ElevenLabs** | ✅ | ❌ | ❌ | Sync | POST /v1/text-to-speech/{voice_id} |
-| **CosyVoice** | ✅ | ❌ | ❌ | Sync/URL | DashScope SpeechSynthesizer |
-| **Suno** | ❌ | ❌ | ✅ | Async | Music gen via relay |
-| **FunASR** | ❌ | ✅ | ❌ | Sync+Async | DashScope + self-hosted |
-| **Azure** | ✅ | ✅ | ❌ | Sync | SSML-TTS + REST STT |
 | **PlayHT** | ✅ | ❌ | ❌ | Sync | /v2/tts/stream |
 | **Cartesia** | ✅ | ❌ | ❌ | Sync | Sonic-3 ultra-low-latency |
-| **Fish Audio** | ✅ | ❌ | ❌ | Sync | Zero-shot voice clone |
-
-> **Models, endpoints, auth, and Extra params per provider:** [docs/provider-reference.md](docs/provider-reference.md)
+| **FishAudio** | ✅ | ❌ | ❌ | Sync | Zero-shot voice clone |
+| **Stepfun** | ✅ | ❌ | ❌ | Sync | StepAudio TTS |
+| **Suno** | ❌ | ❌ | ✅ | Async | Music gen via relay |
 
 ### TTS Streaming
 
@@ -316,23 +265,52 @@ All video providers are **async** — return pending task, poll via `GetTask`:
 
 | Executor | T2V | I2V | V2V | Extend | Edit | Notes |
 |----------|-----|-----|-----|--------|------|-------|
-| **Sora** | ✅ | ✅ | ❌ | ❌ | ❌ | OpenAI (deprecating Sep 24, 2026) |
-| **Kling** | ✅ | ✅ | ❌ | ❌ | ❌ | Kuaishou, JWT auth |
-| **Wan** | ✅ | ✅ | ❌ | ❌ | ❌ | DashScope wan2.7-t2v/i2v |
-| **Grok** | ✅ | ✅ | ❌ | ❌ | ❌ | xAI, cheapest |
-| **Runway** | ✅ | ✅ | ❌ | ❌ | ❌ | Gen-4, X-Runway-Version |
-| **Seedance** | ✅ | ❌ | ❌ | ❌ | ❌ | ByteDance via fal.ai, 2K |
-| **Hailuo** | ✅ | ✅ | ❌ | ❌ | ❌ | MiniMax |
-| **Pika** | ✅ | ✅ | ❌ | ❌ | ❌ | fal.ai, pikaffects |
+| **OpenAI** (Sora) | ✅ | ❌ | ❌ | ❌ | ✅ | Deprecating Sep 2026 |
+| **Alibaba** (Wan) | ✅ | ✅ | ❌ | ❌ | ❌ | DashScope wan2.7 |
+| **Alibaba** (HappyHorse) | ✅ | ✅ | ❌ | ❌ | ❌ | DashScope |
+| **Kuaishou** (Kling) | ✅ | ✅ | ❌ | ❌ | ❌ | JWT auth |
+| **xAI** (Grok) | ✅ | ❌ | ❌ | ❌ | ❌ | Cheapest provider |
+| **Runway** | ✅ | ✅ | ✅ | ✅ | ✅ | Gen-4 |
+| **Seedance** | ✅ | ❌ | ❌ | ❌ | ❌ | ByteDance, 2K |
+| **Hailuo** | ✅ | ❌ | ❌ | ❌ | ❌ | MiniMax |
+| **Pika** | ✅ | ✅ | ✅ | ✅ | ✅ | fal.ai |
 | **Luma** | ✅ | ✅ | ❌ | ❌ | ❌ | Ray3.2 via fal.ai |
-| **OmniHuman** | ❌ | ✅ | ❌ | ❌ | ❌ | Bytedance avatar (img+audio→video) |
-| **HappyHorse** | ✅ | ✅ | ❌ | ❌ | ❌ | DashScope, same infra as Wan |
-
-> **Models, endpoints, auth, and Extra params per provider:** [docs/provider-reference.md](docs/provider-reference.md)
+| **OmniHuman** | ❌ | ✅ | ❌ | ❌ | ❌ | ByteDance avatar |
+| **Stepfun** | ✅ | ✅ | ❌ | ❌ | ❌ | step-video-ti2v |
 
 ---
 
-## Test Coverage — 106 Tests, All Passing ✅
+## Provider Implementations — Embedding
+
+All embedding providers use OpenAI-compatible `/v1/embeddings` format:
+
+| Executor | Models | Dims | Notes |
+|----------|--------|------|-------|
+| **OpenAI** | text-embedding-3-small/large | 1536/3078 | Standard |
+| **Zhipu** | embedding-3, embedding-2 | 256–2048 | open.bigmodel.cn |
+| **Alibaba** | text-embedding-v4/v3/v2/v1 | 64–2048 | DashScope |
+| **Jina** | jina-embeddings-v3, v2-base-zh | 32–2048 | Matryoshka |
+
+---
+
+## Executor Registration
+
+Omni-link uses Go's `init()` + blank-import pattern (same as `database/sql`):
+
+```go
+import (
+    _ "github.com/just4zeroq/Omni-link/executor/text/openai"
+    _ "github.com/just4zeroq/Omni-link/executor/image/alibaba"
+    _ "github.com/just4zeroq/Omni-link/executor/embedding/jina"
+)
+```
+
+**Only imported executors compile into your binary** — true on-demand loading.
+Forget to import → runtime error: `"executor %q not registered (forgot to import?)"`.
+
+---
+
+## Test Coverage
 
 ```
 Package                    Tests     Notes
@@ -340,16 +318,14 @@ Package                    Tests     Notes
 translator/                  37      No API keys needed
 executor/text/deepseek/      27      Needs DEEPSEEK_API_KEY
 executor/text/volcengine/    32      Needs VOLC_API_KEY
-executor/image/seedream/     10      Needs VOLC_API_KEY (7 unit + 3 integration)
 ─────────────────────────────────────────────────
-Total                       106      go test ./... -count=1 -timeout 300s
+Total                        96      go test ./... -count=1 -timeout 300s
 ```
 
 ```bash
 go test ./translator/                             # 37 unit tests
 go test ./executor/text/deepseek/ -timeout 120s    # 27 integration
 go test ./executor/text/volcengine/ -timeout 180s  # 32 integration
-go test ./executor/image/seedream/ -timeout 120s   # 10 (7 unit + 3 integration)
 ```
 
 Integration tests require `.env`:
@@ -365,7 +341,7 @@ VOLC_API_KEY=ark-...
 ```
 Omni-link/
 ├── model/
-│   └── model.go              # ProviderType (40+), Channel, ResolveProtocol
+│   └── model.go              # ProviderType (46+), Channel, ResolveProtocol
 ├── translator/
 │   ├── translator.go         # Convert(), DetectFormat(), Format constants
 │   ├── conv.go               # 12 directional converters
@@ -375,29 +351,69 @@ Omni-link/
 │   ├── gemini.go             # Gemini type defs
 │   └── responses.go          # Responses API type defs
 ├── client/
-│   └── client.go               # Unified Go-idiomatic client (Chat/Image/Speak/Video)
+│   └── client.go             # Unified client (Chat/Image/Speak/Video/Embed)
 ├── executor/
-│   ├── text/
-│   │   ├── executor.go        # Executor interface, RequestInfo, Plan()
-│   │   ├── registry.go        # Plugin registry
-│   │   ├── shared.go          # Helpers (ReplaceModelField, etc.)
-│   │   ├── stream_exec.go     # Stream execution pipeline
-│   │   ├── streams.go         # SSE converters (Claude↔OpenAI)
-│   │   ├── claude/            # Claude executor
-│   │   ├── openai/            # OpenAI executor
-│   │   ├── gemini/            # Gemini executor
-│   │   ├── deepseek/          # DeepSeek (27 tests)
-│   │   └── volcengine/        # Volcengine/Doubao (32 tests)
-│   ├── image/                 # 7 image providers (GPT Image, Midjourney, etc.)
-│   ├── audio/                 # 9 audio providers (TTS/STT/Music)
-│   └── video/                 # 11 video providers
+│   ├── text/                 # 11 text executors
+│   │   ├── executor.go       # Executor interface, Plan()
+│   │   ├── registry.go       # Plugin registry
+│   │   ├── shared.go         # Helpers (ReplaceModelField, etc.)
+│   │   ├── stream_exec.go    # Stream execution pipeline
+│   │   ├── streams.go        # SSE converters (Claude↔OpenAI)
+│   │   ├── openai/           # OpenAI executor
+│   │   ├── anthropic/        # Anthropic Claude executor
+│   │   ├── google/           # Google Gemini executor
+│   │   ├── deepseek/         # DeepSeek (27 tests)
+│   │   ├── volcengine/       # Volcengine/Doubao (32 tests)
+│   │   ├── zhipu/            # Zhipu GLM
+│   │   ├── moonshot/         # Moonshot Kimi
+│   │   ├── minimax/          # MiniMax
+│   │   ├── xiaomi/           # Xiaomi MiMo
+│   │   ├── kunlun/           # Kunlun SkyClaw
+│   │   └── stepfun/          # Stepfun
+│   ├── image/                # 9 image executors
+│   │   ├── openai/           # OpenAI GPT Image / DALL-E
+│   │   ├── alibaba/          # Alibaba Qwen + Wan (DashScope)
+│   │   ├── zhipu/            # Zhipu CogView
+│   │   ├── stepfun/          # Stepfun image gen/edit
+│   │   ├── midjourney/       # Midjourney
+│   │   ├── nanobanana/       # NanoBanana
+│   │   ├── zimage/           # Z-AIGC
+│   │   ├── volcengine/       # ByteDance Seedream via Volcengine
+│   │   └── fal/              # ByteDance Seedream via fal.ai
+│   ├── audio/                # 10 audio executors
+│   │   ├── openai/           # OpenAI TTS/STT
+│   │   ├── azure/            # Azure Speech
+│   │   ├── alibaba/          # Alibaba CosyVoice + FunASR
+│   │   ├── elevenlabs/       # ElevenLabs TTS
+│   │   ├── playht/           # PlayHT TTS
+│   │   ├── cartesia/         # Cartesia TTS
+│   │   ├── fishaudio/        # FishAudio TTS
+│   │   ├── stepfun/          # Stepfun StepAudio TTS
+│   │   └── suno/             # Suno Music
+│   ├── video/                # 12 video executors
+│   │   ├── openai/           # OpenAI Sora
+│   │   ├── alibaba/          # Alibaba Wan + HappyHorse
+│   │   ├── kuaishou/         # Kuaishou Kling
+│   │   ├── xai/              # xAI Grok
+│   │   ├── stepfun/          # Stepfun Step Video
+│   │   ├── runway/           # Runway Gen-4
+│   │   ├── seedance/         # ByteDance Seedance
+│   │   ├── hailuo/           # MiniMax Hailuo
+│   │   ├── pika/             # Pika Labs
+│   │   ├── luma/             # Luma Ray3.2
+│   │   └── omnihuman/        # ByteDance OmniHuman
+│   └── embedding/            # 4 embedding executors
+│       ├── openai/           # OpenAI embeddings
+│       ├── zhipu/            # Zhipu embeddings
+│       ├── alibaba/          # Alibaba Qwen embeddings
+│       └── jina/             # Jina AI embeddings
 ├── docs/
-│   ├── image-generation.md    # Image integration spec
-│   ├── audio-speech.md        # Audio/speech integration spec
-│   ├── video-generation.md    # Video integration spec
-│   └── provider-reference.md  # Per-provider models/endpoints/params
-├── CLAUDE.md                  # Dev conventions
-├── go.mod                     # Go 1.23, zero external deps
+│   ├── image-generation.md   # Image integration spec
+│   ├── audio-speech.md       # Audio/speech integration spec
+│   ├── video-generation.md   # Video integration spec
+│   └── provider-reference.md # Per-provider reference
+├── CLAUDE.md                 # Dev conventions
+├── go.mod                    # Go 1.23, zero external deps
 └── README.md
 ```
 
@@ -408,20 +424,23 @@ Omni-link/
 ### Text Chat Provider
 1. **Define `ProviderType`** in `model/model.go`
 2. **Add format types** (if new protocol) in `translator/`
-3. **Implement `text.Executor`** in `executor/text/<name>.go` with `init()` registration
+3. **Implement `text.Executor`** in `executor/text/<name>/` with `init()` registration
 4. **Define `NativeEndpoints()`** — supported formats + URL paths
 5. **Add vendor logic** in `RequestCustomize`/`ResponseCustomize`
-6. **Write tests** — unit + integration in `executor/text/<name>/<name>_test.go`
+6. **Write tests** — unit + integration
 
 ### Image / Audio / Video Provider
-1. **Choose modality**: `executor/image/`, `executor/audio/`, or `executor/video/`
+1. **Pick modality** — `executor/image/`, `executor/audio/`, `executor/video/`
 2. **Implement executor interface** (e.g. `ImageExecutor`, `AudioExecutor`, `VideoExecutor`)
 3. **Register** via `RegisterImage()`, `RegisterAudio()`, `RegisterVideo()` in `init()`
-4. **TTS note**: sync → wrap with `audio.NewStreamFromResult()`. For streaming → push to `AudioStream.Chunk`
-5. **Video note**: all video is async — return `*VideoTask` with status `pending`, implement `GetTask` for polling
-6. **Write tests** in modality-specific directory
+4. **TTS note**: sync → `audio.NewStreamFromResult()`. Streaming → push to `AudioStream.Chunk`
+5. **Video note**: all video async — return pending `*VideoTask`, implement `GetTask` for polling
+6. **Write tests**
 
----
+### Embedding Provider
+1. **Implement `embedding.EmbeddingExecutor`** in `executor/embedding/<name>/`
+2. **Register** via `embedding.RegisterEmbedding("name", &Executor{})` in `init()`
+3. **Standard format**: OpenAI-compatible POST `/v1/embeddings` — zero conversion needed
 
 ---
 

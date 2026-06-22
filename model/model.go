@@ -6,9 +6,9 @@ type ProviderType int
 
 const (
 	ProviderOpenAI     ProviderType = 1
-	ProviderClaude     ProviderType = 2
-	ProviderGemini     ProviderType = 3
-	ProviderAli        ProviderType = 4
+	ProviderAnthropic   ProviderType = 2
+	ProviderGoogle      ProviderType = 3
+	ProviderAli         ProviderType = 4
 	ProviderTencent    ProviderType = 6
 	ProviderZhipu      ProviderType = 7
 	ProviderDeepSeek   ProviderType = 8
@@ -39,6 +39,11 @@ const (
 	ProviderSuno       ProviderType = 39
 	ProviderMidjourney ProviderType = 40
 	ProviderSeedream   ProviderType = 41
+	ProviderXiaomi     ProviderType = 42
+	ProviderKunlun     ProviderType = 43
+	ProviderStepfun    ProviderType = 44
+	ProviderFal        ProviderType = 45
+	ProviderJina       ProviderType = 46
 )
 
 // ProtocolType identifies the upstream API protocol format.
@@ -58,9 +63,9 @@ const (
 // ResolveProtocol maps ProviderType to ProtocolType.
 func ResolveProtocol(pt ProviderType) ProtocolType {
 	switch pt {
-	case ProviderClaude:
+	case ProviderAnthropic:
 		return ProtocolClaude
-	case ProviderGemini, ProviderVertex:
+	case ProviderGoogle, ProviderVertex:
 		return ProtocolGemini
 	case ProviderAli:
 		return ProtocolAli
